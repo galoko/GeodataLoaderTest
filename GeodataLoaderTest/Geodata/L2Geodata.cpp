@@ -288,7 +288,7 @@ bool L2Geodata::LoadRegion(uint32_t RegionX, uint32_t RegionY, wstring FilePath,
 					position++;
 
 					SubBlock = buffer[position++];
-					SubBlock = ((SubBlock << 1) & 0xFFF0) | NSWE_ALL;
+					SubBlock = ((SubBlock & 0xFFF0) << 1) | NSWE_ALL;
 
 					for (int SubBlockX = 0; SubBlockX < GEO_BLOCK_SIZE; SubBlockX++)
 						for (int SubBlockY = 0; SubBlockY < GEO_BLOCK_SIZE; SubBlockY++) {

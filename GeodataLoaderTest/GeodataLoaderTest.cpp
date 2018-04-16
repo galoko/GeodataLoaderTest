@@ -34,7 +34,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance
 	// L2Geodata::Load(L"..\\data\\pts", GeoType::PTS);
 	// L2Geodata::SaveEasyLoadFile(L"..\\data\\easygeo.bin");
 
-	// L2Geodata::LoadEasyGeo(L"..\\data\\easygeo.bin");
+	L2Geodata::LoadEasyGeo(L"..\\data\\easygeo.bin");
 
 	Geo3DViewForm::Init(640, 480, L"Geo3DView", L"Geodata 3D View", hInstance);
 	Geo3DViewForm::Show();

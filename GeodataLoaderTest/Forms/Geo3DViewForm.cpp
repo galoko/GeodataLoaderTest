@@ -56,23 +56,25 @@ static XMFLOAT2 CameraAngle;
 static XMVECTOR TargetVector;
 static XMVECTOR Up;
 
-static uint32_t* GeoGrid;
+static int32_t* GeoGrid;
 static uint32_t GeoGridWorldX;
 static uint32_t GeoGridWorldY;
 static uint32_t GeoGridWidth;
 static uint32_t GeoGridHeight;
 static uint32_t GeoGridLayersCount;
 
-#define MAX_VERTICES (10 * 1000)
+#define MAX_VERTICES (10 * 1000 * 1000)
 static InputVertex VertexBuffer[MAX_VERTICES];
 static uint32_t NextVertexIndex;
 
-#define MAX_INDEXES (MAX_VERTICES * 2)
+#define MAX_INDEXES (MAX_VERTICES * 5)
 static uint32_t IndexBuffer[MAX_INDEXES];
 static uint32_t NextIndexIndex;
+static uint32_t LineStartIndex;
 
 #define KEYS_COUNT 256
 static bool PressedKeys[KEYS_COUNT];
+static bool InFocus;
 
 void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowClass, WCHAR *Title,
 	HINSTANCE hInstance) {
@@ -222,7 +224,7 @@ void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowC
 	// creating buffers
 
 	D3D11_BUFFER_DESC SceneVertexBufferDesc = { };
-	SceneVertexBufferDesc.ByteWidth = sizeof(InputVertex) * 4;
+	SceneVertexBufferDesc.ByteWidth = sizeof(InputVertex) * MAX_VERTICES;
 	SceneVertexBufferDesc.Usage = D3D11_USAGE_DEFAULT;
 	SceneVertexBufferDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
 	res = DirectDevice->CreateBuffer(&SceneVertexBufferDesc, NULL, &SceneVertexBuffer);
@@ -230,7 +232,7 @@ void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowC
 		throw new std::runtime_error("Couldn't create vertex buffer");
 
 	D3D11_BUFFER_DESC SceneIndexBufferDesc = { };
-	SceneIndexBufferDesc.ByteWidth = sizeof(uint32_t) * 6;
+	SceneIndexBufferDesc.ByteWidth = sizeof(uint32_t) * MAX_INDEXES;
 	SceneIndexBufferDesc.Usage = D3D11_USAGE_DEFAULT;
 	SceneIndexBufferDesc.BindFlags = D3D11_BIND_INDEX_BUFFER;
 	res = DirectDevice->CreateBuffer(&SceneIndexBufferDesc, NULL, &SceneIndexBuffer);
@@ -261,28 +263,35 @@ void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowC
 	DirectDeviceCtx->IASetVertexBuffers(0, 1, &SceneVertexBuffer, &stride, &offset);
 
 	DirectDeviceCtx->IASetIndexBuffer(SceneIndexBuffer, DXGI_FORMAT_R32_UINT, 0);
-	DirectDeviceCtx->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
 	// setup camera
 
 	CameraAngle.y = 3;
 	CameraAngle.x = 0;
 
-	CameraPosition.y = 0;
+	CameraPosition.z = -250;
 
 	Up = XMVectorSet(0, 0, 1, 1);
 
 	// setup matrices
 
-	ProjectionMatrix = XMMatrixPerspectiveFovRH(0.25f * (float)M_PI, (float)Width / (float)Height, 1.0f, 1000.0f);
+	ProjectionMatrix = XMMatrixPerspectiveFovLH(0.25f * (float)M_PI, (float)Width / (float)Height, 1.0f, 1000.0f);
 
 	BuildViewMatrix();
 	BuildWorldMatrix();
 
 	BuildShaderMatrix();
 
-	GenerateDebugStaticScene();
-	// GenerateGeodataScene(13000, 140572, 16000, 16000);
+	// GenerateDebugStaticScene();
+
+
+	int16_t Count;
+	L2Geodata::GetLayeredSubBlocks(13100, 140572, Count)[0] = -2700 << 1;
+	L2Geodata::GetLayeredSubBlocks(13100 + 16, 140572, Count)[0] = -2700 << 1;
+	L2Geodata::GetLayeredSubBlocks(13100, 140572 + 16, Count)[0] = -2700 << 1;
+	L2Geodata::GetLayeredSubBlocks(13100 + 16, 140572 + 16, Count)[0] = -2708 << 1;
+
+	GenerateGeodataScene(13100, 140572, 32, 32);
 
 	// register raw input
 	RAWINPUTDEVICE Rid[1] = { };
@@ -307,7 +316,7 @@ void Geo3DViewForm::BuildViewMatrix(void)
 	XMVECTOR Position = XMVectorSet(CameraPosition.x, CameraPosition.y, CameraPosition.z, 1);
 	XMVECTOR Target = Position + TargetVector;
 
-	ViewMatrix = XMMatrixLookAtRH(Position, Target, Up);
+	ViewMatrix = XMMatrixLookAtLH(Position, Target, Up);
 }
 
 void Geo3DViewForm::BuildWorldMatrix(void)
@@ -326,15 +335,13 @@ void Geo3DViewForm::BuildShaderMatrix(void)
 	DirectDeviceCtx->UpdateSubresource(ShaderMatrix, 0, NULL, &FinalMatrix, 0, 0);
 }
 
-uint32_t Geo3DViewForm::AllocateVertexIndex(InputVertex Vertex)
+uint32_t Geo3DViewForm::AllocateVertexIndex(void)
 {
 	if (NextVertexIndex >= MAX_VERTICES)
 		throw new std::runtime_error("Vertices limit is reached");
 
 	uint32_t Ret = NextVertexIndex;
 	NextVertexIndex++;
-
-	VertexBuffer[Ret] = Vertex;
 
 	return Ret;
 }
@@ -356,6 +363,7 @@ void Geo3DViewForm::ResetScene(void)
 {
 	NextVertexIndex = 0;
 	NextIndexIndex = 0;
+	LineStartIndex = 0;
 }
 
 void Geo3DViewForm::CommitScene(void) {
@@ -374,10 +382,15 @@ void Geo3DViewForm::CommitScene(void) {
 void Geo3DViewForm::GenerateDebugStaticScene(void) {
 	
 	uint32_t Vertices[4];
-	Vertices[0] = AllocateVertexIndex(InputVertex(0.0f, 0.0f, -1.0f, 0, 0, 0));
-	Vertices[1] = AllocateVertexIndex(InputVertex(1.0f, 0.0f, -1.0f, 0, 1, 0));
-	Vertices[2] = AllocateVertexIndex(InputVertex(0.0f, 1.0f, -1.0f, 1, 0, 0));
-	Vertices[3] = AllocateVertexIndex(InputVertex(1.0f, 1.0f, -1.0f, 1, 1, 1));
+	Vertices[0] = AllocateVertexIndex(); 
+	Vertices[1] = AllocateVertexIndex(); 
+	Vertices[2] = AllocateVertexIndex(); 
+	Vertices[3] = AllocateVertexIndex(); 
+
+	VertexBuffer[Vertices[0]] = InputVertex(0.0f, 0.0f, -1.0f, 0, 0, 0);
+	VertexBuffer[Vertices[1]] = InputVertex(1.0f, 0.0f, -1.0f, 0, 1, 0);
+	VertexBuffer[Vertices[2]] = InputVertex(0.0f, 1.0f, -1.0f, 1, 0, 0);
+	VertexBuffer[Vertices[3]] = InputVertex(1.0f, 1.0f, -1.0f, 1, 1, 1);
 
 	AllocateIndexIndex(Vertices[0]);
 	AllocateIndexIndex(Vertices[1]);
@@ -392,7 +405,12 @@ void Geo3DViewForm::GenerateDebugStaticScene(void) {
 
 void Geo3DViewForm::AllocateGrid(int32_t GridWorldX, int32_t GridWorldY, uint32_t GridWidth, uint32_t GridHeight, uint32_t MaxLayersCount)
 {
-	GeoGrid = new uint32_t[GridWidth * GridHeight * MaxLayersCount * 2 * 2];
+	int GridSize = GridWidth * GridHeight * MaxLayersCount * 2 * 2;
+	int GridByteSize = GridSize * sizeof(*GeoGrid);
+
+	GeoGrid = new int32_t[GridSize];
+	memset(GeoGrid, 0xFF, GridByteSize);
+
 	GeoGridWorldX = GridWorldX;
 	GeoGridWorldY = GridWorldY;
 	GeoGridWidth = GridWidth;
@@ -400,7 +418,7 @@ void Geo3DViewForm::AllocateGrid(int32_t GridWorldX, int32_t GridWorldY, uint32_
 	GeoGridLayersCount = MaxLayersCount;
 }
 
-uint32_t * Geo3DViewForm::GetGridPtr(uint32_t GridX, uint32_t GridY, uint32_t LayerIndex, uint32_t VertexX, uint32_t VertexY)
+int32_t * Geo3DViewForm::GetGridPtr(uint32_t GridX, uint32_t GridY, uint32_t LayerIndex, uint32_t VertexX, uint32_t VertexY)
 {
 	if (GridX >= GeoGridWidth || GridY >= GeoGridHeight || LayerIndex >= GeoGridLayersCount || VertexX >= 2 || VertexY >= 2)
 		throw new std::runtime_error("Grid indexes out of bound");
@@ -413,6 +431,21 @@ uint32_t * Geo3DViewForm::GetGridPtr(uint32_t GridX, uint32_t GridY, uint32_t La
 		VertexY;
 
 	return &GeoGrid[Index];
+}
+
+int32_t Geo3DViewForm::GetGridVertexIndex(uint32_t GridX, uint32_t GridY, uint32_t LayerIndex, uint32_t VertexX, uint32_t VertexY) {
+
+	int32_t* Index = GetGridPtr(GridX, GridY, LayerIndex, VertexX, VertexY);
+
+	int32_t Ret = *Index;
+
+	if (Ret == -1) {
+
+		Ret = AllocateVertexIndex();
+		*Index = Ret;
+	}
+	
+	return Ret;
 }
 
 void Geo3DViewForm::GetGeoLayers(int32_t GridX, int32_t GridY, int16_t& LayersCount, int16_t*& Layers)
@@ -487,8 +520,12 @@ template <typename T> int Sign(T val) {
 	return (T(0) < val) - (val < T(0));
 }
 
+#define NOT_DIR(x) (1 - abs(x))
+
 void Geo3DViewForm::GenerateGeodataScene(int32_t WorldX, int32_t WorldY, uint32_t Width, uint32_t Height)
 {
+	ResetScene();
+
 	int GridWidth = Width / L2Geodata::GEO_COORDS_IN_WORLD_COORDS;
 	int GridHeight = Height / L2Geodata::GEO_COORDS_IN_WORLD_COORDS;
 
@@ -527,62 +564,140 @@ void Geo3DViewForm::GenerateGeodataScene(int32_t WorldX, int32_t WorldY, uint32_
 
 				int16_t Height = GET_GEO_HEIGHT(Layers[LayerIndex]);
 
-				InputVertex Vertices[4];
+				int32_t VerticesIndexes[2][2];
 
-				// calculate normals
+				// calculate vertices
 				for (int VertexX = 0; VertexX < 2; VertexX++) 
 					for (int VertexY = 0; VertexY < 2; VertexY++) {
 
-						int VertexIndex = VertexX * 2 + VertexY;
+						InputVertex Vertex;
+
+						Vertex.Pos = { (float)(GridX + VertexX), (float)(GridY + VertexY), (float) Height * 0.1f };
+						// Vertex.Color = { 0.0f, 1.0f, 0.0f };
+						Vertex.Color = { (float)rand() / RAND_MAX, (float)rand() / RAND_MAX, (float)rand() / RAND_MAX };
+
+						// calculate normals
 
 						int NX = VertexX == 0 ? -1 : 1;
 						int NY = VertexY == 0 ? -1 : 1;
 
 						XMVECTOR Normal = { 0, 0, 1 };
-
-						NeighborInfo* N;
 						
+						NeighborInfo* N;
+
 						N = &Neighbors[NX + 1][0 + 1];
-						if (N->LayerIndex != -1) {
-							int NDirection = Sign((int32_t)Height - (int32_t)N->Height);
+						int NXD, NYD, NXYD;
 
-							XMVECTOR FaceNormal = { NDirection * NX, 0, 1 - abs(NDirection) };
-
-							Normal += FaceNormal;
-						}
+						if (N->LayerIndex != -1)
+							NXD = Sign((int32_t)Height - (int32_t)N->Height);
+						else
+							NXD = 0;
 
 						N = &Neighbors[0 + 1][NY + 1];
-						if (N->LayerIndex != -1) {
-							int NDirection = Sign((int32_t)Height - (int32_t)N->Height);
-
-							XMVECTOR FaceNormal = { 0, NDirection * NY, 1 - abs(NDirection) };
-
-							Normal += FaceNormal;
-						}
+						if (N->LayerIndex != -1)
+							NYD = Sign((int32_t)Height - (int32_t)N->Height);
+						else
+							NYD = 0;
 
 						N = &Neighbors[NX + 1][NY + 1];
-						if (N->LayerIndex != -1 && Height == N->Height) {
+						if (N->LayerIndex != -1)
+							NXYD = Sign((int32_t)Height - (int32_t)N->Height);
+						else
+							NXYD = 0;
 
-							XMVECTOR FaceNormal = { 0, 0, 1 };
-
-							Normal += FaceNormal;
-						}
+						Normal += { (float)(NXD * NX), 0, (float)NOT_DIR(NXD) };
+						Normal += { 0, (float)(NYD * NY), (float)NOT_DIR(NYD) };
+						// Normal += { (float)(NOT_DIR(NYD) * NXYD * NX), (float)(NOT_DIR(NXD) * NXYD * NY), (float)NOT_DIR(NXYD) };
 
 						Normal = XMVector3Normalize(Normal);
 
-						XMStoreFloat3(&Vertices[VertexIndex].Normal, Normal);
+						XMStoreFloat3(&Vertex.Normal, Normal);
 
-						Vertices[VertexIndex].Color = { 0, 1, 0 };
+						int32_t Index = GetGridVertexIndex(GridX, GridY, LayerIndex, VertexX, VertexY);
+
+						VertexBuffer[Index] = Vertex;
+						VerticesIndexes[VertexX][VertexY] = Index;
 					}
+
+				/*
+				vertices
+				0 2
+				1 3
+				 */
+
+				// setup top part of quad
+
+				AllocateIndexIndex(VerticesIndexes[0][0]);
+				AllocateIndexIndex(VerticesIndexes[1][0]);
+				AllocateIndexIndex(VerticesIndexes[0][1]);
+
+				AllocateIndexIndex(VerticesIndexes[1][0]);
+				AllocateIndexIndex(VerticesIndexes[0][1]);
+				AllocateIndexIndex(VerticesIndexes[1][1]);
+
+				// now setup two walls
+				if (GridX + 1 < GeoGridWidth) {
+
+					NeighborInfo* N = &Neighbors[1 + 1][0 + 1];
+
+					if (N->LayerIndex != -1 && N->Height != Height) {
+
+						AllocateIndexIndex(VerticesIndexes[1][0]);
+						AllocateIndexIndex(VerticesIndexes[1][1]);
+						AllocateIndexIndex(GetGridVertexIndex(GridX + 1, GridY, N->LayerIndex, 0, 0));
+
+						AllocateIndexIndex(VerticesIndexes[1][1]);
+						AllocateIndexIndex(GetGridVertexIndex(GridX + 1, GridY, N->LayerIndex, 0, 0));
+						AllocateIndexIndex(GetGridVertexIndex(GridX + 1, GridY, N->LayerIndex, 0, 1));
+					}
+				}
+
+				if (GridY + 1 < GeoGridHeight) {
+
+					NeighborInfo* N = &Neighbors[0 + 1][1 + 1];
+
+					if (N->LayerIndex != -1 && N->Height != Height) {
+
+						AllocateIndexIndex(VerticesIndexes[0][1]);
+						AllocateIndexIndex(VerticesIndexes[1][1]);
+						AllocateIndexIndex(GetGridVertexIndex(GridX, GridY + 1, N->LayerIndex, 0, 0));
+
+						AllocateIndexIndex(VerticesIndexes[1][1]);
+						AllocateIndexIndex(GetGridVertexIndex(GridX, GridY + 1, N->LayerIndex, 0, 0));
+						AllocateIndexIndex(GetGridVertexIndex(GridX, GridY + 1, N->LayerIndex, 1, 0));
+					}
+				}
 			}
 		}
 
 	FreeGrid();
+
+	LineStartIndex = NextVertexIndex;
+	for (int VertexIndex = 0; VertexIndex < LineStartIndex; VertexIndex++) {
+
+		InputVertex* Vertex = &VertexBuffer[VertexIndex];
+
+		int32_t L1 = AllocateVertexIndex();
+		int32_t L2 = AllocateVertexIndex();
+
+		XMVECTOR Position = XMLoadFloat3(&Vertex->Pos);
+		XMVECTOR Normal = XMLoadFloat3(&Vertex->Normal);
+
+		XMStoreFloat3(&VertexBuffer[L1].Pos, Position);
+		VertexBuffer[L1].Color = { 1, 0, 0 };
+
+		Position += Normal * 0.5;
+
+		XMStoreFloat3(&VertexBuffer[L2].Pos, Position);
+		VertexBuffer[L2].Color = { 1, 0, 0 };
+	}
+
+	CommitScene();
 }
 
 void Geo3DViewForm::ProcessMouseInput(LONG dx, LONG dy) {
 
-	CameraAngle.x += (float)dx / 300.0f;
+	CameraAngle.x -= (float)dx / 300.0f;
 	CameraAngle.y += (float)dy / 300.0f;
 
 	CameraAngle.x /= (float)M_PI * 2.0f;
@@ -603,6 +718,10 @@ LRESULT Geo3DViewForm::WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam
 		RECT Rect;
 		GetWindowRect(WindowHandle, &Rect);
 		ClipCursor(&Rect);
+		InFocus = true;
+		break;
+	case WM_KILLFOCUS:
+		InFocus = false;
 		break;
 	case WM_INPUT:
 		UINT RimType;
@@ -622,13 +741,18 @@ LRESULT Geo3DViewForm::WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam
 		if ((RawInput.data.mouse.usFlags & 1) != MOUSE_MOVE_RELATIVE)
 			break;
 
-		ProcessMouseInput(RawInput.data.mouse.lLastX, RawInput.data.mouse.lLastY);
+		if (InFocus)
+			ProcessMouseInput(RawInput.data.mouse.lLastX, RawInput.data.mouse.lLastY);
 		
 		break;
 	case WM_SETCURSOR:
 		SetCursor(0);
 		break;
 	case WM_KEYDOWN:
+
+		if (wParam == VK_ESCAPE)
+			PostQuitMessage(0);
+		else
 		if (wParam < KEYS_COUNT)
 			PressedKeys[wParam] = true;
 		break;
@@ -653,10 +777,10 @@ void Geo3DViewForm::Show(void) {
 
 void Geo3DViewForm::ProcessKeyboardInput(double dt)
 {
-	float MoveSpeed = 2.5f;
+	float MoveSpeed = 10.0f;
 
-	XMVECTOR SideVector = XMVector3Normalize(XMVector3Cross(TargetVector, Up));
-	XMVECTOR ForwardVector = XMVector3Cross(-SideVector, Up);
+	XMVECTOR SideVector = XMVector3Normalize(XMVector3Cross(-TargetVector, Up));
+	XMVECTOR ForwardVector = XMVector3Cross(SideVector, Up);
 
 	XMVECTOR Displacement = { };
 
@@ -673,7 +797,7 @@ void Geo3DViewForm::ProcessKeyboardInput(double dt)
 	if (PressedKeys[VK_SPACE] || PressedKeys[VK_CONTROL])
 		Displacement += Up;
 
-	Displacement = XMVector3Normalize(Displacement) * MoveSpeed * dt;
+	Displacement = XMVector3Normalize(Displacement) * (float) (MoveSpeed * dt);
 
 	XMVECTOR Position = XMLoadFloat3(&CameraPosition);
 	Position += Displacement;
@@ -690,7 +814,13 @@ void Geo3DViewForm::DrawScene(void)
 	DirectDeviceCtx->ClearRenderTargetView(RenderTargetView, color);
 	DirectDeviceCtx->ClearDepthStencilView(DepthStencilView, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 
+	DirectDeviceCtx->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 	DirectDeviceCtx->DrawIndexed(NextIndexIndex, 0, 0);
+
+	if (LineStartIndex > 0) {
+		DirectDeviceCtx->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_LINELIST);
+		DirectDeviceCtx->Draw(NextVertexIndex - LineStartIndex, LineStartIndex);
+	}
 
 	// switch the back buffer and the front buffer
 	SwapChain->Present(0, 0);

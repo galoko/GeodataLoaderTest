@@ -18,7 +18,7 @@ private:
 	static void BuildWorldMatrix(void);
 	static void BuildShaderMatrix(void);
 
-	static uint32_t AllocateVertexIndex(InputVertex Vertex);
+	static uint32_t AllocateVertexIndex(void);
 	static uint32_t AllocateIndexIndex(uint32_t Index);
 	static void ResetScene(void);
 	static void CommitScene(void);
@@ -26,7 +26,8 @@ private:
 	static void GenerateDebugStaticScene(void);
 
 	static void AllocateGrid(int32_t GridWorldX, int32_t GridWorldY, uint32_t GridWidth, uint32_t GridHeight, uint32_t MaxLayersCount);
-	static uint32_t* GetGridPtr(uint32_t GridX, uint32_t GridY, uint32_t LayerIndex, uint32_t VertexX, uint32_t VertexY);
+	static int32_t* GetGridPtr(uint32_t GridX, uint32_t GridY, uint32_t LayerIndex, uint32_t VertexX, uint32_t VertexY);
+	static int32_t GetGridVertexIndex(uint32_t GridX, uint32_t GridY, uint32_t LayerIndex, uint32_t VertexX, uint32_t VertexY);
 	static void GetGeoLayers(int32_t GridX, int32_t GridY, int16_t& LayersCount, int16_t*& Layers);
 	static void FindCorrespondingLayer(int16_t LayersCount, int16_t* Layers, int16_t LayerIndex, int16_t OtherLayersCount, 
 		int16_t* OtherLayers, int16_t& CorrespondingLayerIndex, int16_t& CorrespondingHeight);
