@@ -269,13 +269,13 @@ void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowC
 	CameraAngle.y = 3;
 	CameraAngle.x = 0;
 
-	CameraPosition.z = -250;
+	CameraPosition.z = -269.5;
 
 	Up = XMVectorSet(0, 0, 1, 1);
 
 	// setup matrices
 
-	ProjectionMatrix = XMMatrixPerspectiveFovLH(0.25f * (float)M_PI, (float)Width / (float)Height, 1.0f, 1000.0f);
+	ProjectionMatrix = XMMatrixPerspectiveFovLH(0.5f * (float)M_PI, (float)Width / (float)Height, 1.0f, 1000.0f);
 
 	BuildViewMatrix();
 	BuildWorldMatrix();
@@ -284,14 +284,14 @@ void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowC
 
 	// GenerateDebugStaticScene();
 
-
+	/*
 	int16_t Count;
 	L2Geodata::GetLayeredSubBlocks(13100, 140572, Count)[0] = -2700 << 1;
 	L2Geodata::GetLayeredSubBlocks(13100 + 16, 140572, Count)[0] = -2700 << 1;
-	L2Geodata::GetLayeredSubBlocks(13100, 140572 + 16, Count)[0] = -2700 << 1;
-	L2Geodata::GetLayeredSubBlocks(13100 + 16, 140572 + 16, Count)[0] = -2708 << 1;
-
-	GenerateGeodataScene(13100, 140572, 32, 32);
+	L2Geodata::GetLayeredSubBlocks(13100, 140572 + 16, Count)[0] = -2692 << 1;
+	L2Geodata::GetLayeredSubBlocks(13100 + 16, 140572 + 16, Count)[0] = -2700 << 1;
+	 */
+	GenerateGeodataScene(13100, 140572, 1600, 1600);
 
 	// register raw input
 	RAWINPUTDEVICE Rid[1] = { };
@@ -575,43 +575,60 @@ void Geo3DViewForm::GenerateGeodataScene(int32_t WorldX, int32_t WorldY, uint32_
 						Vertex.Pos = { (float)(GridX + VertexX), (float)(GridY + VertexY), (float) Height * 0.1f };
 						// Vertex.Color = { 0.0f, 1.0f, 0.0f };
 						Vertex.Color = { (float)rand() / RAND_MAX, (float)rand() / RAND_MAX, (float)rand() / RAND_MAX };
+						Vertex.Normal = { 0, 0, 0 };
 
-						// calculate normals
+						// if (GridX == 1 && GridY == 0 && VertexX == 0 && VertexY == 1) {
 
-						int NX = VertexX == 0 ? -1 : 1;
-						int NY = VertexY == 0 ? -1 : 1;
+							// calculate normals
 
-						XMVECTOR Normal = { 0, 0, 1 };
-						
-						NeighborInfo* N;
+							int NX = VertexX == 0 ? -1 : 1;
+							int NY = VertexY == 0 ? -1 : 1;
 
-						N = &Neighbors[NX + 1][0 + 1];
-						int NXD, NYD, NXYD;
+							XMVECTOR Normal = { 0, 0, 1 };
 
-						if (N->LayerIndex != -1)
-							NXD = Sign((int32_t)Height - (int32_t)N->Height);
-						else
-							NXD = 0;
+							NeighborInfo *NX_Entry, *NY_Entry, *NXY_Entry;
 
-						N = &Neighbors[0 + 1][NY + 1];
-						if (N->LayerIndex != -1)
-							NYD = Sign((int32_t)Height - (int32_t)N->Height);
-						else
-							NYD = 0;
+							NX_Entry = &Neighbors[NX + 1][0 + 1];
+							int NtoX_D, NtoY_D, NtoXY_D, NXtoXY_D, NYtoXY_D;
 
-						N = &Neighbors[NX + 1][NY + 1];
-						if (N->LayerIndex != -1)
-							NXYD = Sign((int32_t)Height - (int32_t)N->Height);
-						else
-							NXYD = 0;
+							if (NX_Entry->LayerIndex != -1)
+								NtoX_D = Sign((int32_t)Height - (int32_t)NX_Entry->Height);
+							else
+								NtoX_D = 0;
 
-						Normal += { (float)(NXD * NX), 0, (float)NOT_DIR(NXD) };
-						Normal += { 0, (float)(NYD * NY), (float)NOT_DIR(NYD) };
-						// Normal += { (float)(NOT_DIR(NYD) * NXYD * NX), (float)(NOT_DIR(NXD) * NXYD * NY), (float)NOT_DIR(NXYD) };
+							NY_Entry = &Neighbors[0 + 1][NY + 1];
+							if (NY_Entry->LayerIndex != -1)
+								NtoY_D = Sign((int32_t)Height - (int32_t)NY_Entry->Height);
+							else
+								NtoY_D = 0;
 
-						Normal = XMVector3Normalize(Normal);
+							NXY_Entry = &Neighbors[NX + 1][NY + 1];
+							if (NXY_Entry->LayerIndex != -1)
+								NtoXY_D = Sign((int32_t)Height - (int32_t)NXY_Entry->Height);
+							else
+								NtoXY_D = 0;
 
-						XMStoreFloat3(&Vertex.Normal, Normal);
+							if (NX_Entry->LayerIndex != -1 && NXY_Entry->LayerIndex != -1)
+								NXtoXY_D = Sign((int32_t)NX_Entry->Height - (int32_t)NXY_Entry->Height);
+							else
+								NXtoXY_D = 0;
+
+							if (NY_Entry->LayerIndex != -1 && NXY_Entry->LayerIndex != -1)
+								NYtoXY_D = Sign((int32_t)NY_Entry->Height - (int32_t)NXY_Entry->Height);
+							else
+								NYtoXY_D = 0;
+
+							Normal += { (float)(NtoX_D * NX), 0, (float)NOT_DIR(NtoX_D) };
+							Normal += { 0, (float)(NtoY_D * NY), (float)NOT_DIR(NtoY_D) };
+
+							if (NtoY_D != NtoX_D || NtoY_D == 0) {
+								Normal += { (float)(NYtoXY_D * NX), (float)(NXtoXY_D * NY), (float)NOT_DIR(NtoXY_D) };
+							}
+
+							Normal = XMVector3Normalize(Normal);
+
+							XMStoreFloat3(&Vertex.Normal, Normal);
+						// }
 
 						int32_t Index = GetGridVertexIndex(GridX, GridY, LayerIndex, VertexX, VertexY);
 
@@ -777,7 +794,7 @@ void Geo3DViewForm::Show(void) {
 
 void Geo3DViewForm::ProcessKeyboardInput(double dt)
 {
-	float MoveSpeed = 10.0f;
+	float MoveSpeed = 15.0f;
 
 	XMVECTOR SideVector = XMVector3Normalize(XMVector3Cross(-TargetVector, Up));
 	XMVECTOR ForwardVector = XMVector3Cross(SideVector, Up);
@@ -798,6 +815,9 @@ void Geo3DViewForm::ProcessKeyboardInput(double dt)
 		Displacement += Up;
 
 	Displacement = XMVector3Normalize(Displacement) * (float) (MoveSpeed * dt);
+
+	if (XMVector3LengthSq(Displacement).m128_f32[0] <= 0.0)
+		return;
 
 	XMVECTOR Position = XMLoadFloat3(&CameraPosition);
 	Position += Displacement;
