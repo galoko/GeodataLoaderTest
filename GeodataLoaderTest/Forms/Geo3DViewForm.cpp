@@ -14,6 +14,10 @@
 #pragma comment (lib, "d3d11.lib")
 #pragma comment(lib,"d3dcompiler.lib")
 
+#define DEBUG_USE_RANDOM_COLORS
+#define NO_LIGHTING
+#define DEBUG_DRAW_FACES_AS_LINES
+
 struct InputVertex
 {
 	XMFLOAT3 Pos;
@@ -340,12 +344,12 @@ void Geo3DViewForm::GenerateDebugGeodataScene(void)
 			*L2Geodata::GetWorldSubBlockPtr(13100 + X * 16, 140572 + Y * 16) = -2796 << 1;
 		}
 
-	*L2Geodata::GetWorldSubBlockPtr(13100 + 16 * 2, 140572 + 16 * 1) = -2796 + (16 * 5) << 1;
-	*L2Geodata::GetWorldSubBlockPtr(13100 + 16 * 1, 140572 + 16 * 1) = -2796 + (16 * 4) << 1;
-	*L2Geodata::GetWorldSubBlockPtr(13100 + 16 * 3, 140572 + 16 * 1) = -2796 + (16 * 3) << 1;
+	*L2Geodata::GetWorldSubBlockPtr(13100 + 16 * 2, 140572 + 16 * 1) = (-2796 + (16 * 5)) << 1;
+	*L2Geodata::GetWorldSubBlockPtr(13100 + 16 * 1, 140572 + 16 * 1) = (-2796 + (16 * 4)) << 1;
+	*L2Geodata::GetWorldSubBlockPtr(13100 + 16 * 3, 140572 + 16 * 1) = (-2796 + (16 * 3)) << 1;
 
-	*L2Geodata::GetWorldSubBlockPtr(13100 + 16 * 1, 140572 + 16 * 2) = -2796 + (16 * 2) << 1;
-	*L2Geodata::GetWorldSubBlockPtr(13100 + 16 * 3, 140572 + 16 * 2) = -2796 + (16 * 1) << 1;
+	*L2Geodata::GetWorldSubBlockPtr(13100 + 16 * 1, 140572 + 16 * 2) = (-2796 + (16 * 2)) << 1;
+	*L2Geodata::GetWorldSubBlockPtr(13100 + 16 * 3, 140572 + 16 * 2) = (-2796 + (16 * 1)) << 1;
 	 
 	/*
 	*L2Geodata::GetWorldSubBlockPtr(13100 + 16 * 2, 140572 + 16 * 1) = (-2796 + (16 * 1)) << 1;
@@ -666,7 +670,11 @@ void Geo3DViewForm::AddPlane(int GridX, int GridY, int LayerIndex, int16_t Heigh
 			InputVertex *Vertex = &VertexBuffer[VertexIndex];
 
 			Vertex->Pos = { (float)(GridX + VertexX), (float)(GridY + VertexY), (float)Height * 0.1f };
+		#ifdef DEBUG_USE_RANDOM_COLORS
+			Vertex->Color = GetRandomColor();
+		#else
 			Vertex->Color = { 1, 1, 1 };
+		#endif
 			AddNormal(Vertex, { 0, 0, 1 });
 
 			TriangleStrip[TriangleStripIndex++] = VertexIndex;
@@ -815,7 +823,12 @@ void Geo3DViewForm::GetSideVertexIndexes(int GridX, int GridY, NeighborInfo Neig
 			InputVertex *Vertex = &VertexBuffer[VertexIndex];
 
 			Vertex->Pos = { (float)(Info->GridX + Info->VertexX), (float)(Info->GridY + Info->VertexY), (float)Info->Info.Height * 0.1f };
+			
+		#ifdef DEBUG_USE_RANDOM_COLORS
+			Vertex->Color = GetRandomColor();
+		#else
 			Vertex->Color = { 1, 1, 1 };
+		#endif
 			Vertex->Normal = { };
 		}
 
@@ -985,7 +998,9 @@ void Geo3DViewForm::GenerateGeodataScene(int32_t WorldX, int32_t WorldY, uint32_
 
 	LineStartIndex = NextVertexIndex;
 	VisualizeNormals();
-	// VisualizeTriangles();
+#ifdef DEBUG_DRAW_FACES_AS_LINES
+	VisualizeTriangles();
+#endif
 
 	CommitScene();
 }
@@ -1117,12 +1132,17 @@ void Geo3DViewForm::DrawScene(void)
 	DirectDeviceCtx->ClearRenderTargetView(RenderTargetView, color);
 	DirectDeviceCtx->ClearDepthStencilView(DepthStencilView, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 
-	
+#ifndef DEBUG_DRAW_FACES_AS_LINES
+#ifdef NO_LIGHTING
+	Options.LigthEnabled = 0;
+#else
 	Options.LigthEnabled = 1;
+#endif
 	DirectDeviceCtx->UpdateSubresource(ShaderOptionsRef, 0, NULL, &Options, 0, 0);
 
 	DirectDeviceCtx->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 	DirectDeviceCtx->DrawIndexed(NextIndexIndex, 0, 0);
+#endif
 	
 	if (NextVertexIndex > LineStartIndex) {
 
