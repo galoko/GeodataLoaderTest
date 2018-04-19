@@ -340,17 +340,17 @@ void Geo3DViewForm::GenerateDebugGeodataScene(void)
 			*L2Geodata::GetWorldSubBlockPtr(13100 + X * 16, 140572 + Y * 16) = -2796 << 1;
 		}
 
+	/*
 	*L2Geodata::GetWorldSubBlockPtr(13100 + 16 * 2, 140572 + 16 * 1) = -2796 + (16 * 5) << 1;
 	*L2Geodata::GetWorldSubBlockPtr(13100 + 16 * 1, 140572 + 16 * 1) = -2796 + (16 * 4) << 1;
 	*L2Geodata::GetWorldSubBlockPtr(13100 + 16 * 3, 140572 + 16 * 1) = -2796 + (16 * 3) << 1;
 
 	*L2Geodata::GetWorldSubBlockPtr(13100 + 16 * 1, 140572 + 16 * 2) = -2796 + (16 * 2) << 1;
 	*L2Geodata::GetWorldSubBlockPtr(13100 + 16 * 3, 140572 + 16 * 2) = -2796 + (16 * 1) << 1;
+	 */
 	 
-	/*
 	*L2Geodata::GetWorldSubBlockPtr(13100 + 16 * 2, 140572 + 16 * 1) = (-2796 + (16 * 1)) << 1;
 	*L2Geodata::GetWorldSubBlockPtr(13100 + 16 * 3, 140572 + 16 * 2) = (-2796 + (16 * 1)) << 1;
-	 */
 
 	GenerateGeodataScene(13100, 140572, 5 * 16, 5 * 16);
 }
@@ -496,6 +496,12 @@ int32_t Geo3DViewForm::GetGridVertexIndex(uint32_t GridX, uint32_t GridY, uint32
 		Ret = AllocateVertexIndex();
 		VertexBuffer[Ret].Normal = { };
 
+		if (
+			(GridX == 3 && GridY == 1 && VertexX == 0 && VertexY == 1) ||
+			(GridX == 2 && GridY == 2 && VertexX == 1 && VertexY == 0)
+			)
+			cout << GridX << " " << GridY << ", " << VertexX << " " << VertexY << " was allocated by GetGridVertexIndex, " << (void*)&VertexBuffer[Ret] << endl;
+
 		*Index = Ret;
 	}
 
@@ -634,6 +640,9 @@ void Geo3DViewForm::AddNormal(InputVertex *V, XMVECTOR N)
 {
 	XMVECTOR Normal = XMLoadFloat3(&V->Normal);
 
+	if (SameValue(V->Pos.x, 3) && SameValue(V->Pos.y, 2) && SameValue(V->Pos.z, -280))
+		cout << (void*) V << " at 3 1 " << V->Pos.z << ", normal " << N.m128_f32[0] << " " << N.m128_f32[1] << " " << N.m128_f32[2] << " added " << endl;
+
 	Normal += N;
 	XMStoreFloat3(&V->Normal, Normal);
 }
@@ -666,7 +675,7 @@ void Geo3DViewForm::AddPlane(int GridX, int GridY, int LayerIndex, int16_t Heigh
 			InputVertex *Vertex = &VertexBuffer[VertexIndex];
 
 			Vertex->Pos = { (float)(GridX + VertexX), (float)(GridY + VertexY), (float)Height * 0.1f };
-			Vertex->Color = { 1, 1, 1 };
+			Vertex->Color = GetRandomColor();
 			AddNormal(Vertex, { 0, 0, 1 });
 
 			TriangleStrip[TriangleStripIndex++] = VertexIndex;
@@ -714,6 +723,8 @@ bool operator < (HeightInfo& left, HeightInfo& right)
 void Geo3DViewForm::GetSideVertexIndexes(int GridX, int GridY, NeighborInfo Neighbors[3][3], int16_t Height, int OffsetX, int OffsetY,
 	int Direction, int32_t Indexes[4], int& IndexesCount)
 {
+	cout << "side plane generation enter, " << GridX << " " << GridY << ", " << OffsetX << " " << OffsetY << ", " << Direction << endl;
+
 	IndexesCount = 0;
 
 	POINT Offset = { OffsetX, OffsetY };
@@ -766,10 +777,12 @@ void Geo3DViewForm::GetSideVertexIndexes(int GridX, int GridY, NeighborInfo Neig
 
 	if (Heights[2].CanAccess && PlaneDirection == 1 && GetDirection(Heights[2].Info.Height, Heights[3].Info.Height) == 1) {
 		Heights[2].CanAccess = false;
+		cout << Heights[2].GridX << ", " << Heights[2].GridY << " blocked access from " << GridX << ", " << GridY << " in " << OffsetX << " " << OffsetY << " direction, [2]" << endl;
 	}
 	else
 	if (Heights[3].CanAccess && PlaneDirection == -1 && GetDirection(Heights[2].Info.Height, Heights[3].Info.Height) == -1) {
 		Heights[3].CanAccess = false;
+		cout << Heights[3].GridX << ", " << Heights[3].GridY << " blocked access from " << GridX << ", " << GridY << " in " << OffsetX << " " << OffsetY << " direction, [3]" << endl;
 	}
 
 	sort(begin(Heights), end(Heights));
@@ -815,8 +828,15 @@ void Geo3DViewForm::GetSideVertexIndexes(int GridX, int GridY, NeighborInfo Neig
 			InputVertex *Vertex = &VertexBuffer[VertexIndex];
 
 			Vertex->Pos = { (float)(Info->GridX + Info->VertexX), (float)(Info->GridY + Info->VertexY), (float)Info->Info.Height * 0.1f };
-			Vertex->Color = { 1, 1, 1 };
+			Vertex->Color = GetRandomColor();	
 			Vertex->Normal = { };
+
+			if (
+				(Info->GridX == 3 && Info->GridY == 1 && Info->VertexX == 0 && Info->VertexY == 1) ||
+				(Info->GridX == 2 && Info->GridY == 2 && Info->VertexX == 1 && Info->VertexY == 0)
+				)
+				cout << Info->GridX << " " << Info->GridY << ", " << Info->VertexX << " " << Info->VertexY << " was allocated in side plane generation, " << (void*)&VertexBuffer[VertexIndex] << endl;
+
 		}
 
 		// setup vertecis
@@ -835,6 +855,15 @@ void Geo3DViewForm::GetSideVertexIndexes(int GridX, int GridY, NeighborInfo Neig
 			if (Index != NULL) {
 				if (*Index == -1) {
 					*Index = VertexIndex;
+
+					if (
+						(OtherInfo->GridX == 3 && OtherInfo->GridY == 1 && OtherInfo->VertexX == 0 && OtherInfo->VertexY == 1) ||
+						(OtherInfo->GridX == 2 && OtherInfo->GridY == 2 && OtherInfo->VertexX == 1 && OtherInfo->VertexY == 0)
+					)
+						if (Found == NULL)
+							cout << OtherInfo->GridX << " " << OtherInfo->GridY << ", " << OtherInfo->VertexX << " " << OtherInfo->VertexY << " was setup in side plane generation newly allocated, " << (void*)&VertexBuffer[VertexIndex] << endl;
+						else
+							cout << OtherInfo->GridX << " " << OtherInfo->GridY << ", " << OtherInfo->VertexX << " " << OtherInfo->VertexY << " was setup in side plane generation found at " << Found->GridX << " " << Found->GridY << ", " << Found->VertexX << " " << Found->VertexY << ", " << (void*)&VertexBuffer[VertexIndex] << endl;
 				}
 				else if (*Index != VertexIndex)
 					throw new runtime_error("Identical points have different vertex index");
@@ -850,6 +879,8 @@ void Geo3DViewForm::GetSideVertexIndexes(int GridX, int GridY, NeighborInfo Neig
 
 		DebugHeightOutput[DebugHeightOutputIndex++] = Info->Info.Height;
 	}
+
+	cout << "side plane generation exit" << endl;
 }
 
 void Geo3DViewForm::GenerateSideTriangleList(int32_t LeftSide[3], int LeftSideCount, int32_t RightSide[3], int RightSideCount)
@@ -1118,7 +1149,7 @@ void Geo3DViewForm::DrawScene(void)
 	DirectDeviceCtx->ClearDepthStencilView(DepthStencilView, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 
 	
-	Options.LigthEnabled = 1;
+	Options.LigthEnabled = 0;
 	DirectDeviceCtx->UpdateSubresource(ShaderOptionsRef, 0, NULL, &Options, 0, 0);
 
 	DirectDeviceCtx->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
