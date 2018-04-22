@@ -8,8 +8,9 @@ enum GeoType {
 	INTERNAL
 };
 
-#define GET_GEO_HEIGHT(x) ((int16_t)(x & 0xFFF0) >> 1)
-#define GET_GEO_NWSE(x) (x & 0x0F)
+#define GET_GEO_HEIGHT(subblock) ((int16_t)(subblock & 0xFFF0) >> 1)
+#define GET_GEO_NWSE(subblock) ((int16_t)(subblock & 0x0F))
+#define MAKE_SUBBLOCK(height, nwse) ((int16_t)((int16_t)(height & 0xFFF0) << 1 | (int16_t)(nwse & 0x0F)))
 
 class L2Geodata {
 public:
@@ -77,11 +78,15 @@ public:
 	static int32_t AllocateLayersEntries(uint32_t Count);
 
 	static inline int16_t *GetGeoSubBlockPtr(uint32_t GeoX, uint32_t GeoY);
+	static int16_t *GetWorldSubBlockPtr(int32_t WorldX, int32_t WorldY);
+
 	static inline bool WorldToGeo(int32_t WorldX, int32_t WorldY, uint32_t *GeoX, uint32_t *GeoY);
 	static inline bool GeoToWorld(uint32_t GeoX, uint32_t GeoY, int32_t *WorldX, int32_t *WorldY);
 	static inline int16_t *GetGeoSubBlockPtrInternal(uint32_t RegionX, uint32_t RegionY,
 		uint32_t BlockX, uint32_t BlockY, uint32_t SubBlockX, uint32_t SubBlockY);
 	static inline int16_t *GetGeoLayersPtrInternal(uint32_t RegionX, uint32_t RegionY,
+		uint32_t BlockX, uint32_t BlockY, uint32_t SubBlockX, uint32_t SubBlockY);
+	static inline void EraseGeoSubBlock(uint32_t RegionX, uint32_t RegionY,
 		uint32_t BlockX, uint32_t BlockY, uint32_t SubBlockX, uint32_t SubBlockY);
 	static inline void SetGeoSubBlockInternal(uint32_t RegionX, uint32_t RegionY,
 		uint32_t BlockX, uint32_t BlockY, uint32_t SubBlockX, uint32_t SubBlockY, 
@@ -101,8 +106,7 @@ public:
 	static void LoadEasyGeo(wstring FilePath);
 	static void SaveEasyGeo(wstring FilePath);
 
-	static int16_t* GetLayeredSubBlocks(int32_t WorldX, int32_t WorldY, int16_t& Count);
+	static int16_t* GetSubBlocks(int32_t WorldX, int32_t WorldY, int16_t& Count);
 
-	// debug
-	static int16_t *GetWorldSubBlockPtr(int32_t WorldX, int32_t WorldY);
+	static void SetSubBlocks(int32_t WorldX, int32_t WorldY, int16_t Count, ...);
 };

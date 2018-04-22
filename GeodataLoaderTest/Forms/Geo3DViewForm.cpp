@@ -14,9 +14,9 @@
 #pragma comment (lib, "d3d11.lib")
 #pragma comment(lib,"d3dcompiler.lib")
 
-#define DEBUG_USE_RANDOM_COLORS
-#define NO_LIGHTING
-#define DEBUG_DRAW_FACES_AS_LINES
+#undef DEBUG_USE_RANDOM_COLORS
+#undef NO_LIGHTING
+#undef VERBOSE_LOG
 
 struct InputVertex
 {
@@ -56,7 +56,7 @@ static ID3D11SamplerState* Sampler;
 
 struct ShaderOptions {
 	float LigthEnabled;
-	float Padding[3];
+	XMFLOAT3 LightDirection;
 };
 
 static ID3D11Buffer *ShaderOptionsRef;
@@ -70,26 +70,90 @@ static XMFLOAT2 CameraAngle;
 static XMVECTOR TargetVector;
 static XMVECTOR Up;
 
-static int32_t* GeoGrid;
-static uint32_t GeoGridWorldX;
-static uint32_t GeoGridWorldY;
-static uint32_t GeoGridWidth;
-static uint32_t GeoGridHeight;
-static uint32_t GeoGridLayersCount;
+static uint32_t GridWorldX;
+static uint32_t GridWorldY;
+static uint32_t GridWidth;
+static uint32_t GridHeight;
+static uint8_t *GridUsageMap;
+static uint8_t *PointUsageMap;
 
-#define MAX_VERTICES (1 * 1000 * 1000)
+#define MAX_VERTICES (10 * 1000 * 1000)
 static InputVertex *VertexBuffer;
 static uint32_t NextVertexIndex;
 
-#define MAX_INDEXES (MAX_VERTICES * 5)
+#define MAX_INDEXES (MAX_VERTICES * 7)
 static uint32_t *IndexBuffer;
 static uint32_t NextIndexIndex;
-static uint32_t LineStartIndex;
+static uint32_t LinesStartIndex;
+static uint32_t NormalsStartIndex;
+static uint32_t TrianglesLinesStartIndex;
+
+#pragma pack(push, 1)
+
+struct SubblockUsageInfo {
+private:
+	unsigned char data[(L2Geodata::LAYERS_PER_SUBBLOCK_LIMIT * 3 + 7) / 8];
+
+	bool getBit(int Index) {
+		return (data[Index / 8] >> (Index % 8)) & 1;
+	}
+
+	bool setBit(int Index, bool Value) {
+		if (Value)
+			data[Index / 8] |= 1 << (Index % 8);
+		else
+			data[Index / 8] &= ~(1 << (Index % 8));
+	}
+
+public:
+	bool getSurfaceUsed(int Layer) {
+		return getBit(Layer);
+	}
+
+	void setSurfaceUsed(int Layer) {
+		setBit(Layer, true);
+	}
+
+	bool getHeightRangeUsed(int HeightRangeIndex, int Side) {
+		return getBit(L2Geodata::LAYERS_PER_SUBBLOCK_LIMIT * (1 + Side) + HeightRangeIndex);
+	}
+
+	void setSurfaceUsed(int HeightRangeIndex, int Side) {
+		setBit(L2Geodata::LAYERS_PER_SUBBLOCK_LIMIT * (1 + Side) + HeightRangeIndex, true);
+	}
+};
+#pragma pack(pop)
+
+static bool DrawTrianglesAsLines;
 
 #define KEYS_COUNT 256
 static bool PressedKeys[KEYS_COUNT];
 static bool InFocus;
 static float MoveSpeed = 30.0f;
+
+POINT CrossProduct(POINT P, int S) {
+	return { -P.y * S, P.x * S };
+}
+
+POINT AddPoint(POINT P1, POINT P2) {
+	return { P1.x + P2.x, P1.y + P2.y };
+}
+
+POINT NegatePoint(POINT P) {
+	return { -P.x, -P.y };
+}
+
+POINT ToZeroBasePoint(POINT P) {
+	return { (P.x + 1) / 2, (P.y + 1) / 2 };
+}
+
+template <typename T> int Sign(T val) {
+	return (T(0) < val) - (val < T(0));
+}
+
+int GetDirection(int16_t from, int16_t to) {
+	return Sign((int32_t)to - (int32_t)from);
+}
 
 void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowClass, WCHAR *Title,
 	HINSTANCE hInstance) {
@@ -122,7 +186,7 @@ void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowC
 	HRESULT res;
 
 	// creating directx 11 device and swap chain
-	res = D3D11CreateDeviceAndSwapChain(NULL, D3D_DRIVER_TYPE_HARDWARE, 0, D3D11_CREATE_DEVICE_SINGLETHREADED | D3D11_CREATE_DEVICE_DEBUG, NULL, 0,
+	res = D3D11CreateDeviceAndSwapChain(NULL, D3D_DRIVER_TYPE_HARDWARE, 0, D3D11_CREATE_DEVICE_SINGLETHREADED, NULL, 0,
 		D3D11_SDK_VERSION, &sd, &SwapChain, &DirectDevice, NULL, &DirectDeviceCtx);
 	if (FAILED(res))
 		throw new std::runtime_error("Couldn't create DX device and swap chain");
@@ -317,8 +381,9 @@ void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowC
 
 	// GenerateDebugStaticScene();
 
-	GenerateDebugGeodataScene();
-	// GenerateGeodataScene(13100, 140572, 1600, 1600);
+	// GenerateDebugGeodataScene();
+	GenerateGeodataScene(13100, 140572, 16 * 200, 16 * 200);
+	// GenerateGeodataScene(13100 + 15 * 16 - 3 * 16, 140572 + 272 * 16 - 3 * 16, 2 * 16, 2 * 16);
 
 	// register raw input
 	RAWINPUTDEVICE Rid[1] = {};
@@ -341,19 +406,24 @@ void Geo3DViewForm::GenerateDebugGeodataScene(void)
 
 			int Offset = abs(X) | abs(Y);
 
-			*L2Geodata::GetWorldSubBlockPtr(13100 + X * 16, 140572 + Y * 16) = -2796 << 1;
+			L2Geodata::SetSubBlocks(13100 + X * 16, 140572 + Y * 16, 1, MAKE_SUBBLOCK(-2796, 0));
 		}
 
-	*L2Geodata::GetWorldSubBlockPtr(13100 + 16 * 2, 140572 + 16 * 1) = (-2796 + (16 * 5)) << 1;
-	*L2Geodata::GetWorldSubBlockPtr(13100 + 16 * 1, 140572 + 16 * 1) = (-2796 + (16 * 4)) << 1;
-	*L2Geodata::GetWorldSubBlockPtr(13100 + 16 * 3, 140572 + 16 * 1) = (-2796 + (16 * 3)) << 1;
+	// L2Geodata::SetSubBlocks(13100 + 16 * 1, 140572 + 16 * 2, 1, MAKE_SUBBLOCK(-2796 + 16 * 4, 0));
+	L2Geodata::SetSubBlocks(13100 + 16 * 1, 140572 + 16 * 1, 2, MAKE_SUBBLOCK(-2796 + 16 * 0, 0), MAKE_SUBBLOCK(-2796 + 16 * 5, 0));
 
-	*L2Geodata::GetWorldSubBlockPtr(13100 + 16 * 1, 140572 + 16 * 2) = (-2796 + (16 * 2)) << 1;
-	*L2Geodata::GetWorldSubBlockPtr(13100 + 16 * 3, 140572 + 16 * 2) = (-2796 + (16 * 1)) << 1;
-	 
 	/*
-	*L2Geodata::GetWorldSubBlockPtr(13100 + 16 * 2, 140572 + 16 * 1) = (-2796 + (16 * 1)) << 1;
-	*L2Geodata::GetWorldSubBlockPtr(13100 + 16 * 3, 140572 + 16 * 2) = (-2796 + (16 * 1)) << 1;
+	L2Geodata::SetSubBlocks(13100 + 16 * 2, 140572 + 16 * 1, 1, MAKE_SUBBLOCK(-2796 + 16 * 5, 0));
+	L2Geodata::SetSubBlocks(13100 + 16 * 1, 140572 + 16 * 1, 1, MAKE_SUBBLOCK(-2796 + 16 * 4, 0));
+	L2Geodata::SetSubBlocks(13100 + 16 * 3, 140572 + 16 * 1, 1, MAKE_SUBBLOCK(-2796 + 16 * 3, 0));
+	
+	L2Geodata::SetSubBlocks(13100 + 16 * 1, 140572 + 16 * 2, 1, MAKE_SUBBLOCK(-2796 + 16 * 2, 0));
+	L2Geodata::SetSubBlocks(13100 + 16 * 3, 140572 + 16 * 2, 1, MAKE_SUBBLOCK(-2796 + 16 * 1, 0));
+	 */
+
+	/*
+	L2Geodata::SetSubBlocks(13100 + 16 * 2, 140572 + 16 * 1, (-2796 + (16 * 1)) << 1);
+	L2Geodata::SetSubBlocks(13100 + 16 * 3, 140572 + 16 * 2, (-2796 + (16 * 1)) << 1);
 	 */
 
 	GenerateGeodataScene(13100, 140572, 5 * 16, 5 * 16);
@@ -417,12 +487,14 @@ void Geo3DViewForm::ResetScene(void)
 {
 	NextVertexIndex = 0;
 	NextIndexIndex = 0;
-	LineStartIndex = 0;
+	LinesStartIndex = 0;
+	NormalsStartIndex = 0;
+	TrianglesLinesStartIndex = 0;
 }
 
 void Geo3DViewForm::CommitScene(void) {
 
-	D3D11_BOX Region = {};
+	D3D11_BOX Region = { };
 	Region.bottom = 1;
 	Region.back = 1;
 
@@ -457,61 +529,12 @@ void Geo3DViewForm::GenerateDebugStaticScene(void) {
 	CommitScene();
 }
 
-void Geo3DViewForm::AllocateGrid(int32_t GridWorldX, int32_t GridWorldY, uint32_t GridWidth, uint32_t GridHeight, uint32_t MaxLayersCount)
-{
-	int GridSize = GridWidth * GridHeight * MaxLayersCount * 2 * 2;
-	int GridByteSize = GridSize * sizeof(*GeoGrid);
-
-	GeoGrid = new int32_t[GridSize];
-	memset(GeoGrid, 0xFF, GridByteSize);
-
-	GeoGridWorldX = GridWorldX;
-	GeoGridWorldY = GridWorldY;
-	GeoGridWidth = GridWidth;
-	GeoGridHeight = GridHeight;
-	GeoGridLayersCount = MaxLayersCount;
-}
-
-int32_t* Geo3DViewForm::GetGridPtr(uint32_t GridX, uint32_t GridY, uint32_t LayerIndex, uint32_t VertexX, uint32_t VertexY)
-{
-	if (GridX >= GeoGridWidth || GridY >= GeoGridHeight || LayerIndex >= GeoGridLayersCount || VertexX >= 2 || VertexY >= 2)
-		return NULL;
-
-	uint32_t Index =
-		GridX * GeoGridHeight * GeoGridLayersCount * 2 * 2 +
-		GridY * GeoGridLayersCount * 2 * 2 +
-		LayerIndex * 2 * 2 +
-		VertexX * 2 +
-		VertexY;
-
-	return &GeoGrid[Index];
-}
-
-int32_t Geo3DViewForm::GetGridVertexIndex(uint32_t GridX, uint32_t GridY, uint32_t LayerIndex, uint32_t VertexX, uint32_t VertexY) {
-
-	int32_t* Index = GetGridPtr(GridX, GridY, LayerIndex, VertexX, VertexY);
-	if (Index == NULL)
-		throw runtime_error("Invalid grid access");
-
-	int32_t Ret = *Index;
-
-	if (Ret == -1) {
-
-		Ret = AllocateVertexIndex();
-		VertexBuffer[Ret].Normal = { };
-
-		*Index = Ret;
-	}
-
-	return Ret;
-}
-
 void Geo3DViewForm::GetGeoLayers(int32_t GridX, int32_t GridY, int16_t& LayersCount, int16_t*& Layers)
 {
-	int32_t X = GeoGridWorldX + GridX * L2Geodata::GEO_COORDS_IN_WORLD_COORDS;
-	int32_t Y = GeoGridWorldY + GridY * L2Geodata::GEO_COORDS_IN_WORLD_COORDS;
+	int32_t X = GridWorldX + GridX * L2Geodata::GEO_COORDS_IN_WORLD_COORDS;
+	int32_t Y = GridWorldY + GridY * L2Geodata::GEO_COORDS_IN_WORLD_COORDS;
 
-	Layers = L2Geodata::GetLayeredSubBlocks(X, Y, LayersCount);
+	Layers = L2Geodata::GetSubBlocks(X, Y, LayersCount);
 }
 
 void Geo3DViewForm::FindCorrespondingLayer(int16_t LayersCount, int16_t* Layers, int16_t LayerIndex, int16_t OtherLayersCount, int16_t* OtherLayers,
@@ -586,16 +609,6 @@ void Geo3DViewForm::GetNeighbors(int GridX, int GridY, int16_t LayersCount, int1
 		}
 }
 
-void Geo3DViewForm::FreeGrid(void)
-{
-	delete[] GeoGrid;
-
-	GeoGrid = NULL;
-	GeoGridWidth = 0;
-	GeoGridHeight = 0;
-	GeoGridLayersCount = 0;
-}
-
 float GetRandomFloat(void) {
 	return (float)rand() / RAND_MAX;
 }
@@ -629,19 +642,6 @@ void Geo3DViewForm::AddLine(InputVertex *P1, InputVertex *P2)
 	VertexBuffer[L2].Color = { 1, 0, 0 };
 }
 
-bool SameValue(float a, float b)
-{
-	return fabs(a - b) < 0.001;
-}
-
-void Geo3DViewForm::AddNormal(InputVertex *V, XMVECTOR N) 
-{
-	XMVECTOR Normal = XMLoadFloat3(&V->Normal);
-
-	Normal += N;
-	XMStoreFloat3(&V->Normal, Normal);
-}
-
 void Geo3DViewForm::AddTriangleStrip(const int32_t Strip[], int Length)
 {
 	for (int Index = 0; Index <= Length - 3; Index++) {
@@ -652,30 +652,24 @@ void Geo3DViewForm::AddTriangleStrip(const int32_t Strip[], int Length)
 	}
 }
 
-void Geo3DViewForm::AddPlane(int GridX, int GridY, int LayerIndex, int16_t Height)
+void Geo3DViewForm::AddPlane(int GridX, int GridY, int16_t SubBlock)
 {
 	int32_t TriangleStrip[4];
 	int TriangleStripIndex = 0;
 
-	bool IsEven = (GridX + GridY) % 2 == 0;
-
-	// add top plane to vertices
 	for (int VertexY = 0; VertexY< 2; VertexY++)
-		for (int X = 0; X < 2; X++) {
+		for (int VertexX = 0; VertexX < 2; VertexX++) {
 
-			int VertexX = IsEven ? X : 1 - X;
-
-			int32_t VertexIndex = GetGridVertexIndex(GridX, GridY, LayerIndex, VertexX, VertexY);
-
+			int32_t VertexIndex = AllocateVertexIndex();
 			InputVertex *Vertex = &VertexBuffer[VertexIndex];
 
-			Vertex->Pos = { (float)(GridX + VertexX), (float)(GridY + VertexY), (float)Height * 0.1f };
+			Vertex->Pos = { (float)(GridX + VertexX), (float)(GridY + VertexY), (float)GET_GEO_HEIGHT(SubBlock) * 0.1f };
 		#ifdef DEBUG_USE_RANDOM_COLORS
 			Vertex->Color = GetRandomColor();
 		#else
 			Vertex->Color = { 1, 1, 1 };
 		#endif
-			AddNormal(Vertex, { 0, 0, 1 });
+			Vertex->Normal = { 0, 0, 1 };
 
 			TriangleStrip[TriangleStripIndex++] = VertexIndex;
 		}
@@ -683,238 +677,46 @@ void Geo3DViewForm::AddPlane(int GridX, int GridY, int LayerIndex, int16_t Heigh
 	AddTriangleStrip(TriangleStrip, 4);
 }
 
-POINT CrossProduct(POINT P, int S) {
-	return { -P.y * S, P.x * S };
-}
-
-POINT AddPoint(POINT P1, POINT P2) {
-	return { P1.x + P2.x, P1.y + P2.y };
-}
-
-POINT NegatePoint(POINT P) {
-	return { -P.x, -P.y };
-}
-
-POINT ToZeroBasePoint(POINT P) {
-	return { (P.x + 1) / 2, (P.y + 1) / 2 };
-}
-
-template <typename T> int Sign(T val) {
-	return (T(0) < val) - (val < T(0));
-}
-
-int GetDirection(int16_t from, int16_t to) {
-	return Sign((int32_t)to - (int32_t)from);
-}
-
-struct HeightInfo {
-	bool CanAccess;
-	NeighborInfo Info;
-	int GridX, GridY, VertexX, VertexY;
-	int32_t VertexIndex;
-};
-
-bool operator < (HeightInfo& left, HeightInfo& right)
+void Geo3DViewForm::AddSidePlane(int GridX, int GridY, int16_t Height, int16_t DestHeight, int OffsetX, int OffsetY)
 {
-	return left.Info.Height < right.Info.Height;
-}
-
-void Geo3DViewForm::GetSideVertexIndexes(int GridX, int GridY, NeighborInfo Neighbors[3][3], int16_t Height, int OffsetX, int OffsetY,
-	int Direction, int32_t Indexes[4], int& IndexesCount)
-{
-	IndexesCount = 0;
-
-	POINT Offset = { OffsetX, OffsetY };
-
-	POINT CurrentPoint = { 0, 0 };
-	POINT VertexVector = AddPoint(Offset, CrossProduct(Offset, Direction));
-
-	int16_t DestHeight = Neighbors[1 + Offset.x][1 + Offset.y].Height;
 	int PlaneDirection = GetDirection(Height, DestHeight);
+	if (PlaneDirection == 0)
+		return;
 
-	HeightInfo Heights[4];
+	POINT VertexPoint = { OffsetX, OffsetY };
+	POINT Direction = CrossProduct(VertexPoint, -1);
+	VertexPoint = ToZeroBasePoint(AddPoint(VertexPoint, CrossProduct(VertexPoint, 1)));
 
-	for (int HeightIndex = 0; HeightIndex < 4; HeightIndex++) {
+	int32_t TriangleStrip[4];
+	int TriangleStripIndex = 0;
 
-		POINT VertexCoord = ToZeroBasePoint(VertexVector);
-		HeightInfo* Info = &Heights[HeightIndex];
+	for (int DirectionState = 0; DirectionState < 2; DirectionState++)
+		for (int HeightState = 0; HeightState < 2; HeightState++) {
 
-		Info->CanAccess = true;
-		Info->Info = Neighbors[1 + CurrentPoint.x][1 + CurrentPoint.y];
-		Info->GridX = GridX + CurrentPoint.x;
-		Info->GridY = GridY + CurrentPoint.y;
-		Info->VertexX = VertexCoord.x;
-		Info->VertexY = VertexCoord.y;
-		Info->VertexIndex = -1;
-
-		CurrentPoint = AddPoint(CurrentPoint, Offset);
-		Offset = CrossProduct(Offset, Direction);
-		VertexVector = CrossProduct(VertexVector, Direction);
-	}
-
-	for (int HeightIndex = 2; HeightIndex < 4; HeightIndex++) {
-
-		int HeightDirection;
-
-		if (PlaneDirection == 0) {
-			HeightDirection = GetDirection(Height, Heights[HeightIndex].Info.Height);
-			if (HeightDirection != PlaneDirection)
-				Heights[HeightIndex].CanAccess = false;
-		}
-		else {
-			HeightDirection = GetDirection(Height, Heights[HeightIndex].Info.Height);
-			if (HeightDirection == -PlaneDirection)
-				Heights[HeightIndex].CanAccess = false;
-
-			HeightDirection = GetDirection(DestHeight, Heights[HeightIndex].Info.Height);
-			if (HeightDirection == PlaneDirection)
-				Heights[HeightIndex].CanAccess = false;
-		}
-	}
-
-	if (Heights[2].CanAccess && PlaneDirection == 1 && GetDirection(Heights[2].Info.Height, Heights[3].Info.Height) == 1) {
-		Heights[2].CanAccess = false;
-	}
-	else
-	if (Heights[3].CanAccess && PlaneDirection == -1 && GetDirection(Heights[2].Info.Height, Heights[3].Info.Height) == -1) {
-		Heights[3].CanAccess = false;
-	}
-
-	sort(begin(Heights), end(Heights));
-
-	int16_t DebugHeightOutput[4];
-	int DebugHeightOutputIndex = 0;
-
-	for (int HeightIndex = 0; HeightIndex < 4; HeightIndex++) {
-
-		HeightInfo* Info = &Heights[HeightIndex];
-		if (!Info->CanAccess || Info->VertexIndex != -1)
-			continue;	
-
-		HeightInfo* Found = NULL;
-
-		int32_t VertexIndex = -1;
-		for (int OtherHeightIndex = HeightIndex; OtherHeightIndex < 4; OtherHeightIndex++) {
-
-			HeightInfo* OtherInfo = &Heights[OtherHeightIndex];
-			if (!OtherInfo->CanAccess || OtherInfo->Info.Height != Info->Info.Height)
-				continue;
-
-			if (OtherInfo->VertexIndex != -1)
-				throw new runtime_error("Vertex already has a vertex index");
-
-			int32_t* Index = GetGridPtr(OtherInfo->GridX, OtherInfo->GridY, OtherInfo->Info.LayerIndex, OtherInfo->VertexX, OtherInfo->VertexY);
-			if (Index != NULL && *Index != -1) {
-
-				if (VertexIndex != -1 && *Index != VertexIndex)
-					throw new runtime_error("Identical points have different vertex index");
-
-				VertexIndex = *Index;
-
-				Found = OtherInfo;
-			}
-		}
-
-		// if this point don't have a vertex yet - creating it
-		if (VertexIndex == -1) {
-
-			VertexIndex = AllocateVertexIndex();
-
+			int32_t VertexIndex = AllocateVertexIndex();
 			InputVertex *Vertex = &VertexBuffer[VertexIndex];
 
-			Vertex->Pos = { (float)(Info->GridX + Info->VertexX), (float)(Info->GridY + Info->VertexY), (float)Info->Info.Height * 0.1f };
-			
-		#ifdef DEBUG_USE_RANDOM_COLORS
+			Vertex->Pos = { 
+				(float)(GridX + VertexPoint.x + DirectionState * Direction.x),
+				(float)(GridY + VertexPoint.y + DirectionState * Direction.y),
+				(float)(Height + (DestHeight - Height) * HeightState) * 0.1f };
+#ifdef DEBUG_USE_RANDOM_COLORS
 			Vertex->Color = GetRandomColor();
-		#else
+#else
 			Vertex->Color = { 1, 1, 1 };
-		#endif
-			Vertex->Normal = { };
+#endif
+			Vertex->Normal = {(float)(OffsetX * -PlaneDirection), (float)(OffsetY * -PlaneDirection), 0 };
+
+			TriangleStrip[TriangleStripIndex++] = VertexIndex;
 		}
 
-		// setup vertecis
-		for (int OtherHeightIndex = HeightIndex; OtherHeightIndex < 4; OtherHeightIndex++) {
-
-			HeightInfo* OtherInfo = &Heights[OtherHeightIndex];
-			if (!OtherInfo->CanAccess || OtherInfo->Info.Height != Info->Info.Height)
-				continue;
-
-			if (OtherInfo->VertexIndex != -1)
-				throw new runtime_error("Vertex already has a vertex index");
-
-			OtherInfo->VertexIndex = VertexIndex;
-
-			int32_t* Index = GetGridPtr(OtherInfo->GridX, OtherInfo->GridY, OtherInfo->Info.LayerIndex, OtherInfo->VertexX, OtherInfo->VertexY);
-			if (Index != NULL) {
-				if (*Index == -1) {
-					*Index = VertexIndex;
-				}
-				else if (*Index != VertexIndex)
-					throw new runtime_error("Identical points have different vertex index");
-			}
-		}
-
-		InputVertex *Vertex = &VertexBuffer[VertexIndex];
-		AddNormal(Vertex, { (float)(OffsetX * -PlaneDirection), (float)(OffsetY * -PlaneDirection), 0 });
-
-		if (IndexesCount >= 4)
-			throw runtime_error("Too much indexes");
-		Indexes[IndexesCount++] = VertexIndex;
-
-		DebugHeightOutput[DebugHeightOutputIndex++] = Info->Info.Height;
-	}
-}
-
-void Geo3DViewForm::GenerateSideTriangleList(int32_t LeftSide[3], int LeftSideCount, int32_t RightSide[3], int RightSideCount)
-{
-	int LeftIndex = 0;
-	int RightIndex = 0;
-
-	while (LeftIndex < LeftSideCount - 1 || RightIndex < RightSideCount - 1) {
-
-		int I1, I2, I3;
-
-		I1 = LeftSide[min(LeftIndex, LeftSideCount - 1)];
-		I2 = RightSide[min(RightIndex, RightSideCount - 1)];
-		
-		InputVertex* LeftVertex = &VertexBuffer[I1];
-		InputVertex* RightVertex = &VertexBuffer[I2];
-
-		if (LeftIndex == LeftSideCount - 1)
-			I3 = RightSide[++RightIndex];
-		else
-		if (RightIndex == RightSideCount - 1)
-			I3 = LeftSide[++LeftIndex];
-		else {
-			if (LeftVertex->Pos.z < RightVertex->Pos.z) 
-				I3 = LeftSide[++LeftIndex];
-			else
-				I3 = RightSide[++RightIndex];
-		}
-
-		AllocateIndexIndex(I1);
-		AllocateIndexIndex(I2);
-		AllocateIndexIndex(I3);
-	}
-}
-
-void Geo3DViewForm::AddSidePlane(int GridX, int GridY, NeighborInfo Neighbors[3][3], int16_t Height, int OffsetX, int OffsetY)
-{
-	int32_t LeftSide[4], RightSide[4];
-	int LeftSideCount, RightSideCount;
-
-	if (GridX == 2 && GridY == 1 && OffsetX == 0 && OffsetY == 1)
-		GridX = GridX;
-
-	GetSideVertexIndexes(GridX, GridY, Neighbors, Height, OffsetX, OffsetY,  1, LeftSide, LeftSideCount);
-	GetSideVertexIndexes(GridX, GridY, Neighbors, Height, OffsetX, OffsetY, -1, RightSide, RightSideCount);
-
-	GenerateSideTriangleList(LeftSide, LeftSideCount, RightSide, RightSideCount);
+	AddTriangleStrip(TriangleStrip, 4);
 }
 
 void Geo3DViewForm::VisualizeNormals(void)
 {
-	for (unsigned int VertexIndex = 0; VertexIndex < LineStartIndex; VertexIndex++) {
+	NormalsStartIndex = NextVertexIndex;
+	for (unsigned int VertexIndex = 0; VertexIndex < LinesStartIndex; VertexIndex++) {
 
 		InputVertex* Vertex = &VertexBuffer[VertexIndex];
 
@@ -938,71 +740,201 @@ void Geo3DViewForm::VisualizeNormals(void)
 
 void Geo3DViewForm::VisualizeTriangles(void)
 {
-	for (unsigned int IndexIndex = 0; IndexIndex < NextIndexIndex; IndexIndex += 3) {
+	TrianglesLinesStartIndex = NextVertexIndex;
+	for (unsigned int IndexIndex = 0; IndexIndex < NextIndexIndex; IndexIndex += 6) {
 
 		InputVertex* P1 = &VertexBuffer[IndexBuffer[IndexIndex + 0]];
 		InputVertex* P2 = &VertexBuffer[IndexBuffer[IndexIndex + 1]];
 		InputVertex* P3 = &VertexBuffer[IndexBuffer[IndexIndex + 2]];
+		InputVertex* P4 = &VertexBuffer[IndexBuffer[IndexIndex + 5]];
 
 		AddLine(P1, P2);
 		AddLine(P2, P3);
 		AddLine(P3, P1);
+		AddLine(P3, P4);
+		AddLine(P4, P2);
 	}
 }
 
-void Geo3DViewForm::NormalizeNormals(void)
+void Geo3DViewForm::GenerateTopPlanes(int GridX, int GridY) 
 {
-	for (unsigned int VertexIndex = 0; VertexIndex < NextVertexIndex; VertexIndex++) {
+	int16_t LayersCount;
+	int16_t *Layers;
 
-		InputVertex *Vertex = &VertexBuffer[VertexIndex];
+	GetGeoLayers(GridX, GridY, LayersCount, Layers);
+	for (int LayerIndex = 0; LayerIndex < LayersCount; LayerIndex++)
+		AddPlane(GridX, GridY, Layers[LayerIndex]);
+}
 
-		XMVECTOR Normal = XMVector3Normalize(XMLoadFloat3(&Vertex->Normal));
-		XMStoreFloat3(&Vertex->Normal, Normal);
+struct HeightRange {
+	int16_t Start, End;
+
+	HeightRange() {
 	}
+
+	HeightRange(int16_t Start, int16_t End) {
+		if (Start > End) {
+			this->Start = End;
+			this->End = Start;
+		}
+		else {
+			this->Start = Start;
+			this->End = End;
+		}
+	}
+
+	bool overlapTestWith(const HeightRange* OtherRange) {
+		return (OtherRange->Start <= this->End);
+	}
+
+	void mergeWith(const HeightRange* OtherRange) {
+		this->End = max(OtherRange->End, this->End);
+	}
+};
+
+bool operator < (const HeightRange& Left, const HeightRange& Right) {
+
+	return Left.Start < Right.Start;
+}
+
+void Geo3DViewForm::GenerateSidePlanes(int GridX, int GridY, int OffsetX, int OffsetY)
+{
+	int16_t LayersCount1, LayersCount2;
+	int16_t *Layers1, *Layers2;
+
+	GetGeoLayers(GridX, GridY, LayersCount1, Layers1);
+	GetGeoLayers(GridX + OffsetX, GridY + OffsetY, LayersCount2, Layers2);
+
+	HeightRange HeightRanges[L2Geodata::LAYERS_PER_SUBBLOCK_LIMIT];
+	int HeightRangesIndex = 0;
+
+	for (int Index1 = 0; Index1 < LayersCount1; Index1++) 
+		for (int Index2 = 0; Index2 < LayersCount2; Index2++) {
+
+			int16_t Height1 = GET_GEO_HEIGHT(Layers1[Index1]);
+			int16_t Height2 = GET_GEO_HEIGHT(Layers2[Index2]);
+
+			bool ShouldPlaceWall = true;
+			int MinDist = 16 * 3;
+
+			if (ShouldPlaceWall && Index1 < LayersCount1 - 1) {
+				int16_t UnderneathHeight = GET_GEO_HEIGHT(Layers1[Index1 + 1]);
+
+				int DistBetweenTwoLayers = Height1 - UnderneathHeight;
+				int DistBetweenLayers = Height1 - Height2;
+
+				if (DistBetweenTwoLayers > MinDist && DistBetweenLayers > MinDist)
+					ShouldPlaceWall = false;
+			}
+
+			if (ShouldPlaceWall && Index2 < LayersCount2 - 1) {
+				int16_t UnderneathHeight = GET_GEO_HEIGHT(Layers2[Index2 + 1]);
+
+				int DistBetweenTwoLayers = Height2 - UnderneathHeight;
+				int DistBetweenLayers = Height2 - Height1;
+
+				if (DistBetweenTwoLayers > MinDist && DistBetweenLayers > MinDist)
+					ShouldPlaceWall = false;
+			}
+
+			if (ShouldPlaceWall)
+				HeightRanges[HeightRangesIndex++] = HeightRange(Height1, Height2);
+		}
+
+	if (HeightRangesIndex > 0) {
+		sort(begin(HeightRanges), begin(HeightRanges) + HeightRangesIndex);
+
+		HeightRange SimplifiedHeightRanges[L2Geodata::LAYERS_PER_SUBBLOCK_LIMIT];
+		int SimplifiedHeightRangesIndex = 0;
+
+		HeightRange* CurrentRange = &SimplifiedHeightRanges[SimplifiedHeightRangesIndex++];
+		*CurrentRange = HeightRanges[0];
+
+		for (int Index = 1; Index < HeightRangesIndex; Index++) {
+
+			HeightRange* NextRange = &HeightRanges[Index];
+			if (CurrentRange->overlapTestWith(NextRange))
+				CurrentRange->mergeWith(NextRange);
+			else {
+				CurrentRange = &SimplifiedHeightRanges[SimplifiedHeightRangesIndex++];
+				*CurrentRange = *NextRange;
+			}
+		}
+
+		for (int Index = 0; Index < SimplifiedHeightRangesIndex; Index++) {
+
+			HeightRange* Range = &SimplifiedHeightRanges[Index];
+				
+			AddSidePlane(GridX, GridY, Range->Start, Range->End, OffsetX, OffsetY);
+		}
+	}
+}
+
+void Geo3DViewForm::SetupGenerationGrid(int32_t WorldX, int32_t WorldY, uint32_t Width, uint32_t Height)
+{
+	GridWorldX = WorldX;
+	GridWorldY = WorldY;
+
+	GridWidth = Width / L2Geodata::GEO_COORDS_IN_WORLD_COORDS;
+	GridHeight = Height / L2Geodata::GEO_COORDS_IN_WORLD_COORDS;
+
+	GridUsageMap = (uint8_t*) calloc((GridWidth * GridHeight * 3 * L2Geodata::LAYERS_PER_SUBBLOCK_LIMIT + 7) / 8, 1);
+}
+
+#define GET_GRID_BIT_INDEX \
+GridX * GridHeight * 3 * L2Geodata::LAYERS_PER_SUBBLOCK_LIMIT + \
+GridY * 3 * L2Geodata::LAYERS_PER_SUBBLOCK_LIMIT + \
+Side * L2Geodata::LAYERS_PER_SUBBLOCK_LIMIT + \
+LayerIndex
+
+bool Geo3DViewForm::GetGridUsage(int GridX, int GridY, int Side, int16_t LayerIndex)
+{
+	int Index = GET_GRID_BIT_INDEX;
+
+	return (GridUsageMap[Index / 8] >> (Index % 8)) & 1;
+}
+
+void Geo3DViewForm::SetGridSideUsage(int GridX, int GridY, int Side, int16_t LayerIndex)
+{
+	int Index = GET_GRID_BIT_INDEX;
+
+	GridUsageMap[Index / 8] |= 1 << (Index % 8);
+}
+
+void Geo3DViewForm::FinalizeGenerationGrid(void)
+{
+	free(GridUsageMap);
+	GridUsageMap = NULL;
+
+	GridWorldX = 0;
+	GridWorldY = 0;
+
+	GridWidth = 0;
+	GridHeight = 0;
 }
 
 void Geo3DViewForm::GenerateGeodataScene(int32_t WorldX, int32_t WorldY, uint32_t Width, uint32_t Height)
 {
+	SetupGenerationGrid(WorldX, WorldY, Width, Height);
+
 	ResetScene();
 
-	int GridWidth = Width / L2Geodata::GEO_COORDS_IN_WORLD_COORDS;
-	int GridHeight = Height / L2Geodata::GEO_COORDS_IN_WORLD_COORDS;
+	for (uint32_t GridX = 0; GridX < GridWidth; GridX++)
+		for (uint32_t GridY = 0; GridY < GridHeight; GridY++) {
 
-	AllocateGrid(WorldX, WorldY, GridWidth, GridHeight, L2Geodata::LAYERS_PER_SUBBLOCK_LIMIT);
-
-	for (int GridX = 0; GridX < GridWidth; GridX++)
-		for (int GridY = 0; GridY < GridHeight; GridY++) {
-
-			int16_t LayersCount;
-			int16_t *Layers;
-
-			GetGeoLayers(GridX, GridY, LayersCount, Layers);
-		
-			for (int LayerIndex = 0; LayerIndex < LayersCount; LayerIndex++) {
-
-				int16_t Height = GET_GEO_HEIGHT(Layers[LayerIndex]);
-
-				NeighborInfo Neighbors[3][3];
-				GetNeighbors(GridX, GridY, LayersCount, Layers, LayerIndex, Neighbors);
-
-				AddPlane(GridX, GridY, LayerIndex, Height);
-
-				AddSidePlane(GridX, GridY, Neighbors, Height, 0, 1);
-				AddSidePlane(GridX, GridY, Neighbors, Height, 1, 0);
-			}
+			GenerateTopPlanes(GridX, GridY);
+			GenerateSidePlanes(GridX, GridY, 1, 0);
+			GenerateSidePlanes(GridX, GridY, 0, 1);
 		}
 
-	FreeGrid();
+	LinesStartIndex = NextVertexIndex;
 
-	NormalizeNormals();
-
-	LineStartIndex = NextVertexIndex;
-	VisualizeNormals();
-#ifdef DEBUG_DRAW_FACES_AS_LINES
+	// VisualizeNormals();
 	VisualizeTriangles();
-#endif
 
 	CommitScene();
+
+	FinalizeGenerationGrid();
 }
 
 void Geo3DViewForm::ProcessMouseInput(LONG dx, LONG dy) {
@@ -1074,6 +1006,9 @@ LRESULT Geo3DViewForm::WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam
 		if (wParam < KEYS_COUNT)
 			PressedKeys[wParam] = false;
 		break;
+	case WM_RBUTTONDOWN:
+		DrawTrianglesAsLines = !DrawTrianglesAsLines;
+		break;
 	case WM_MOUSEWHEEL:
 		MoveSpeed = max(1.0f, MoveSpeed + GET_WHEEL_DELTA_WPARAM(wParam) / 120.0f * 1.5f);
 		break;
@@ -1132,26 +1067,27 @@ void Geo3DViewForm::DrawScene(void)
 	DirectDeviceCtx->ClearRenderTargetView(RenderTargetView, color);
 	DirectDeviceCtx->ClearDepthStencilView(DepthStencilView, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 
-#ifndef DEBUG_DRAW_FACES_AS_LINES
-#ifdef NO_LIGHTING
-	Options.LigthEnabled = 0;
-#else
-	Options.LigthEnabled = 1;
-#endif
-	DirectDeviceCtx->UpdateSubresource(ShaderOptionsRef, 0, NULL, &Options, 0, 0);
-
-	DirectDeviceCtx->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-	DirectDeviceCtx->DrawIndexed(NextIndexIndex, 0, 0);
-#endif
+	XMStoreFloat3(&Options.LightDirection, XMVector3Normalize(XMVectorSet( -0.512651205f, 0.189535633f, -0.837415695f, 1.0f)));
 	
-	if (NextVertexIndex > LineStartIndex) {
-
+	if (!DrawTrianglesAsLines) {
+	#ifdef NO_LIGHTING
 		Options.LigthEnabled = 0;
+	#else
+		Options.LigthEnabled = 1;
+	#endif
 		DirectDeviceCtx->UpdateSubresource(ShaderOptionsRef, 0, NULL, &Options, 0, 0);
 
-		DirectDeviceCtx->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_LINELIST);
-		DirectDeviceCtx->Draw(NextVertexIndex - LineStartIndex, LineStartIndex);
+		DirectDeviceCtx->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		DirectDeviceCtx->DrawIndexed(NextIndexIndex, 0, 0);
 	}
+
+	Options.LigthEnabled = 0;
+	DirectDeviceCtx->UpdateSubresource(ShaderOptionsRef, 0, NULL, &Options, 0, 0);
+	
+	DirectDeviceCtx->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_LINELIST);
+	// DirectDeviceCtx->Draw(TrianglesLinesStartIndex - NormalsStartIndex, NormalsStartIndex);
+	if (DrawTrianglesAsLines)
+		DirectDeviceCtx->Draw(NextVertexIndex - TrianglesLinesStartIndex, TrianglesLinesStartIndex);
 
 	// switch the back buffer and the front buffer
 	SwapChain->Present(0, 0);

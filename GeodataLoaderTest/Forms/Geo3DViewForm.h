@@ -27,25 +27,24 @@ private:
 
 	static void GenerateDebugStaticScene(void);
 
-	static void AllocateGrid(int32_t GridWorldX, int32_t GridWorldY, uint32_t GridWidth, uint32_t GridHeight, uint32_t MaxLayersCount);
-	static int32_t* GetGridPtr(uint32_t GridX, uint32_t GridY, uint32_t LayerIndex, uint32_t VertexX, uint32_t VertexY);
-	static int32_t GetGridVertexIndex(uint32_t GridX, uint32_t GridY, uint32_t LayerIndex, uint32_t VertexX, uint32_t VertexY);
 	static void GetGeoLayers(int32_t GridX, int32_t GridY, int16_t& LayersCount, int16_t*& Layers);
 	static void FindCorrespondingLayer(int16_t LayersCount, int16_t* Layers, int16_t LayerIndex, int16_t OtherLayersCount, 
 		int16_t* OtherLayers, int16_t& CorrespondingLayerIndex, int16_t& CorrespondingHeight);
 	static void GetNeighbors(int GridX, int GridY, int16_t LayersCount, int16_t* Layers, int16_t LayerIndex, NeighborInfo Neighbors[3][3]);
-	static void FreeGrid(void);
 	static void AddLine(InputVertex *P1, InputVertex *P2);
-	static void AddNormal(InputVertex *V, XMVECTOR N);
 	static void AddTriangleStrip(const int32_t Strip[], int Length);
-	static void AddPlane(int GridX, int GridY, int LayerIndex, int16_t Height);
-	static void GetSideVertexIndexes(int GridX, int GridY, NeighborInfo Neighbors[3][3], int16_t Height, int OffsetX, int OffsetY, 
-		int Direction, int32_t Indexes[4], int& IndexesCount);
-	static void GenerateSideTriangleList(int32_t LeftSide[3], int LeftSideCount, int32_t RightSide[3], int RightSideCount);
-	static void AddSidePlane(int GridX, int GridY, NeighborInfo Neighbors[3][3], int16_t Height, int OffsetX, int OffsetY);
+	static void AddPlane(int GridX, int GridY, int16_t Height);
+	static void AddSidePlane(int GridX, int GridY, int16_t Height, int16_t DestHeight, int OffsetX, int OffsetY);
 	static void VisualizeNormals(void);
 	static void VisualizeTriangles(void);
-	static void NormalizeNormals(void);
+	static void GenerateTopPlanes(int GridX, int GridY);
+	static void GenerateSidePlanes(int GridX, int GridY, int OffsetX, int OffsetY);
+
+	static void SetupGenerationGrid(int32_t WorldX, int32_t WorldY, uint32_t Width, uint32_t Height);
+	static bool GetGridUsage(int GridX, int GridY, int Side, int16_t LayerIndex);
+	static void SetGridSideUsage(int GridX, int GridY, int Side, int16_t LayerIndex);
+	static void FinalizeGenerationGrid(void);
+
 	static void GenerateGeodataScene(int32_t WorldX, int32_t WorldY, uint32_t Width, uint32_t Height);
 	static void GenerateDebugGeodataScene(void);
 

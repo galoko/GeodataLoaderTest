@@ -102,7 +102,7 @@ int16_t *L2Geodata::GetWorldSubBlockPtr(int32_t WorldX, int32_t WorldY) {
 		return nullptr;
 }
 
-int16_t* L2Geodata::GetLayeredSubBlocks(int32_t WorldX, int32_t WorldY, int16_t& Count) {
+int16_t* L2Geodata::GetSubBlocks(int32_t WorldX, int32_t WorldY, int16_t& Count) {
 
 	uint32_t GeoX, GeoY;
 
@@ -144,7 +144,6 @@ int16_t* L2Geodata::GetLayeredSubBlocks(int32_t WorldX, int32_t WorldY, int16_t&
 		return nullptr;
 	}
 }
-
 // set
 
 inline void L2Geodata::ValidateSubBlock(int16_t SubBlock) {
@@ -158,7 +157,11 @@ inline void L2Geodata::SetGeoSubBlockInternal(uint32_t RegionX, uint32_t RegionY
 
 	ValidateSubBlock(SubBlock);
 
-	*GetGeoSubBlockPtrInternal(RegionX, RegionY, BlockX, BlockY, SubBlockX, SubBlockY) = SubBlock;
+	int16_t* DestSubBlock = GetGeoSubBlockPtrInternal(RegionX, RegionY, BlockX, BlockY, SubBlockX, SubBlockY);
+	if (*DestSubBlock != SPECIAL_SUBBLOCK_EMPTY)
+		throw new runtime_error("Subblock override prevention");
+
+	*DestSubBlock = SubBlock;
 }
 
 inline void L2Geodata::SetGeoLayersInternal(uint32_t RegionX, uint32_t RegionY, uint32_t BlockX, uint32_t BlockY,
@@ -198,6 +201,52 @@ inline void L2Geodata::SetGeoLayersInternal(uint32_t RegionX, uint32_t RegionY, 
 
 		if (PrevHeight <= Height)
 			throw new std::runtime_error("Layers required to be sorted (" + to_string(PrevHeight) + " > " + to_string(Height) + ")");
+	}
+}
+
+inline void L2Geodata::EraseGeoSubBlock(uint32_t RegionX, uint32_t RegionY, uint32_t BlockX, uint32_t BlockY, uint32_t SubBlockX, uint32_t SubBlockY)
+{
+	int32_t BlockIndex = MultilayerBlockMap[RegionX][RegionY][BlockX][BlockY];
+	if (BlockIndex != -1)
+		MultilayerSubblockMap[BlockIndex][SubBlockX][SubBlockY] = -1;
+
+	int16_t* DestSubBlock = GetGeoSubBlockPtrInternal(RegionX, RegionY, BlockX, BlockY, SubBlockX, SubBlockY);
+	*DestSubBlock = SPECIAL_SUBBLOCK_EMPTY;
+}
+
+void L2Geodata::SetSubBlocks(int32_t WorldX, int32_t WorldY, int16_t Count, ...)
+{
+	if (Count < 0 || Count > LAYERS_PER_SUBBLOCK_LIMIT)
+		throw new runtime_error("Invalid subblock count");
+
+	uint32_t GeoX, GeoY;
+
+	if (WorldToGeo(WorldX, WorldY, &GeoX, &GeoY)) {
+
+		uint32_t RegionX, RegionY, BlockX, BlockY, SubBlockX, SubBlockY;
+
+		SplitGeoCoordinates();
+
+		EraseGeoSubBlock(RegionX, RegionY, BlockX, BlockY, SubBlockX, SubBlockY);
+
+		if (Count > 0) {
+			int16_t Layers[LAYERS_PER_SUBBLOCK_LIMIT];
+
+			va_list ap;
+			va_start(ap, Count);
+			for (int Index = 0; Index < Count; Index++)
+				Layers[Index] = va_arg(ap, int16_t);
+			va_end(ap);
+
+			sort(begin(Layers), begin(Layers) + Count);
+			reverse(begin(Layers), begin(Layers) + Count);
+
+			if (Count == 1)
+				SetGeoSubBlockInternal(RegionX, RegionY, BlockX, BlockY, SubBlockX, SubBlockY, Layers[0]);
+			else {
+				SetGeoLayersInternal(RegionX, RegionY, BlockX, BlockY, SubBlockX, SubBlockY, Count, Layers);
+			}
+		}
 	}
 }
 
@@ -413,6 +462,9 @@ void L2Geodata::LoadEasyGeo(wstring FilePath) {
 	Stream.read((char *)&MultilayerSubblockMap, sizeof(MultilayerSubblockMap));
 	Stream.read((char *)&LayersTable, sizeof(LayersTable));
 
+	Stream.read((char *)&NextMultilayerBlockMapIndex, sizeof(NextMultilayerBlockMapIndex));
+	Stream.read((char *)&NextLayersTableIndex, sizeof(NextLayersTableIndex));
+
 	if (Stream.fail())
 		throw new std::runtime_error("Couldn't load easygeo");
 
@@ -429,4 +481,6 @@ void L2Geodata::SaveEasyGeo(wstring FilePath) {
 	Stream.write((char *)&MultilayerBlockMap, sizeof(MultilayerBlockMap));
 	Stream.write((char *)&MultilayerSubblockMap, sizeof(MultilayerSubblockMap));
 	Stream.write((char *)&LayersTable, sizeof(LayersTable));
+	Stream.write((char *)&NextMultilayerBlockMapIndex, sizeof(NextMultilayerBlockMapIndex));
+	Stream.write((char *)&NextLayersTableIndex, sizeof(NextLayersTableIndex));
 }

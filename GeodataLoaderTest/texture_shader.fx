@@ -6,6 +6,7 @@ cbuffer Transformation : register( b0 )
 cbuffer Options : register( b1 )
 {
     float LightEnabled;
+    float3 lightDirection;
 };
 
 //--------------------------------------------------------------------------------------
@@ -48,7 +49,6 @@ float4 PS( PS_INPUT input) : SV_Target
 
     float4 ambientColor = float4(0.125f, 0.125f, 0.75f, 1.0f);
     float4 diffuseColor = float4(0.5f, 0.5f, 75.0f, 1.0f);
-    float3 lightDirection = float3(1.0f, 1.0f, 0.0f);
 
     float4 textureColor = input.Color;
     float3 lightDir;
