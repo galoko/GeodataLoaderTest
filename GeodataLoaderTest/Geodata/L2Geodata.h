@@ -1,3 +1,5 @@
+#pragma once
+
 #include <string>
 
 using namespace std;
@@ -62,6 +64,8 @@ public:
 
 	const static int16_t SPECIAL_SUBBLOCK_EMPTY = 0x7D7D;
 	const static int16_t SPECIAL_SUBBLOCK_MULTILAYER = 0x7F7F;
+
+	const static int HEIGHT_RESOLUTION = 8;
 
 	static int16_t *FullData;
 	static int32_t MultilayerBlockMap[GEO_WIDTH_IN_REGIONS][GEO_HEIGHT_IN_REGIONS][GEO_REGION_SIZE_IN_BLOCKS][GEO_REGION_SIZE_IN_BLOCKS];
