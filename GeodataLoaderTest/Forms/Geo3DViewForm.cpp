@@ -14,7 +14,7 @@
 #pragma comment(lib,"d3dcompiler.lib")
 
 #undef DEBUG_USE_RANDOM_COLORS
-#define NO_LIGHTING
+#undef NO_LIGHTING
 #undef VERBOSE_LOG
 
 struct InputVertex
@@ -78,7 +78,7 @@ static uint8_t *GridUsageMap;
 #pragma pack(push,1)
 struct UsageInfo {
 	bool IsSet : 1;
-	unsigned char UsageCount : 3;
+	uint8_t UsageCount : 3;
 };
 #pragma pack(pop)
 
@@ -93,11 +93,15 @@ static POINT *FloodFillStack;
 static uint32_t FloodFillStackSize;
 static int32_t FloodFillStackIndex;
 
-#define MAX_VERTICES (10 * 1000 * 1000)
+static vector<vector<Point>> SeparatedPoints;
+static vector<Point> Points;
+static vector<uint32_t> Indices;
+
+#define MAX_VERTICES (30 * 1000 * 1000)
 static InputVertex *VertexBuffer;
 static uint32_t NextVertexIndex;
 
-#define MAX_INDEXES (MAX_VERTICES * 7)
+#define MAX_INDEXES (MAX_VERTICES * 5)
 static uint32_t *IndexBuffer;
 static uint32_t NextIndexIndex;
 static uint32_t LinesStartIndex;
@@ -111,19 +115,23 @@ static bool PressedKeys[KEYS_COUNT];
 static bool InFocus;
 static float MoveSpeed = 30.0f;
 
-POINT CrossProduct(POINT P, int S) {
+inline POINT CrossProduct(POINT P, int S) {
 	return { -P.y * S, P.x * S };
 }
 
-POINT AddPoint(POINT P1, POINT P2) {
+inline POINT AddPoint(POINT P1, POINT P2) {
 	return { P1.x + P2.x, P1.y + P2.y };
 }
 
-POINT NegatePoint(POINT P) {
+inline POINT NegatePoint(POINT P) {
 	return { -P.x, -P.y };
 }
 
-POINT ToZeroBasePoint(POINT P) {
+inline bool Equals(POINT P1, POINT P2) {
+	return (P1.x == P2.x && P1.y == P2.y);
+}
+
+inline POINT ToZeroBasePoint(POINT P) {
 	return { (P.x + 1) / 2, (P.y + 1) / 2 };
 }
 
@@ -131,18 +139,23 @@ template <typename T> int Sign(T val) {
 	return (T(0) < val) - (val < T(0));
 }
 
-int GetDirection(int16_t from, int16_t to) {
+inline int GetDirection(int16_t from, int16_t to) {
 	return Sign((int32_t)to - (int32_t)from);
 }
 
 struct HeightRange {
+	int Direction;
 	int16_t Start, End;
 
 	HeightRange() {
 	}
 
 	HeightRange(int16_t Start, int16_t End) {
-		if (Start > End) {
+
+		Direction = GetDirection(Start, End);
+		assert(Direction != 0);
+
+		if (Direction == -1) {
 			this->Start = End;
 			this->End = Start;
 		}
@@ -153,11 +166,11 @@ struct HeightRange {
 	}
 
 	bool SortedOverlapTestWith(const HeightRange* OtherRange) {
-		return (OtherRange->Start <= this->End);
+		return (OtherRange->Direction == this->Direction && OtherRange->Start <= this->End);
 	}
 
 	bool OverlapTestWith(const HeightRange* OtherRange) {
-		return (OtherRange->Start < this->End && OtherRange->End > this->Start);
+		return (OtherRange->Direction == this->Direction && OtherRange->Start < this->End && OtherRange->End > this->Start);
 	}
 		 
 	void MergeWith(const HeightRange* OtherRange) {
@@ -396,8 +409,11 @@ void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowC
 
 	// GenerateDebugStaticScene();
 
+	srand(57);
+
 	// GenerateDebugGeodataScene();
-	GenerateGeodataScene(13100, 140572, 16 * 200, 16 * 200);
+	GenerateGeodataScene(13100, 140572, 16 * 2000, 16 * 2000);
+	// GenerateGeodataScene(13100 + 16 * 137, 140572 + 16 * 73, 16 * 100, 16 * 10);
 	// GenerateGeodataScene(13100, 140572, 16 * 4, 16 * 4);
 	// GenerateGeodataScene(13100 + 15 * 16 - 3 * 16, 140572 + 272 * 16 - 3 * 16, 2 * 16, 2 * 16);
 
@@ -425,8 +441,11 @@ void Geo3DViewForm::GenerateDebugGeodataScene(void)
 			L2Geodata::SetSubBlocks(13100 + X * 16, 140572 + Y * 16, 1, MAKE_SUBBLOCK(-2796, 0));
 		}
 
+	L2Geodata::SetSubBlocks(13100 + 16 * 1, 140572 + 16 * 1, 1, MAKE_SUBBLOCK(-2796 + 16 * 1, 0));
+	L2Geodata::SetSubBlocks(13100 + 16 * 2, 140572 + 16 * 2, 1, MAKE_SUBBLOCK(-2796 + 16 * 1, 0));
+
 	// L2Geodata::SetSubBlocks(13100 + 16 * 1, 140572 + 16 * 2, 1, MAKE_SUBBLOCK(-2796 + 16 * 4, 0));
-	L2Geodata::SetSubBlocks(13100 + 16 * 1, 140572 + 16 * 1, 2, MAKE_SUBBLOCK(-2796 + 16 * 0, 0), MAKE_SUBBLOCK(-2796 + 16 * 5, 0));
+	// L2Geodata::SetSubBlocks(13100 + 16 * 1, 140572 + 16 * 1, 2, MAKE_SUBBLOCK(-2796 + 16 * 0, 0), MAKE_SUBBLOCK(-2796 + 16 * 5, 0));
 
 	/*
 	L2Geodata::SetSubBlocks(13100 + 16 * 2, 140572 + 16 * 1, 1, MAKE_SUBBLOCK(-2796 + 16 * 5, 0));
@@ -693,11 +712,9 @@ void Geo3DViewForm::AddPlane(int GridX, int GridY, int16_t SubBlock, XMFLOAT3& C
 	AddTriangleStrip(TriangleStrip, 4);
 }
 
-void Geo3DViewForm::AddSidePlane(int GridX, int GridY, int16_t Height, int16_t DestHeight, int OffsetX, int OffsetY, XMFLOAT3& Color)
+void Geo3DViewForm::AddSidePlane(int GridX, int GridY, int16_t Height, int16_t DestHeight, int OffsetX, int OffsetY, int PlaneDirection, XMFLOAT3& Color)
 {
-	int PlaneDirection = GetDirection(Height, DestHeight);
-	if (PlaneDirection == 0)
-		return;
+	assert(PlaneDirection != 0);
 
 	POINT VertexPoint = { OffsetX, OffsetY };
 	POINT Direction = CrossProduct(VertexPoint, -1);
@@ -757,19 +774,132 @@ void Geo3DViewForm::VisualizeNormals(void)
 void Geo3DViewForm::VisualizeTriangles(void)
 {
 	TrianglesLinesStartIndex = NextVertexIndex;
-	for (unsigned int IndexIndex = 0; IndexIndex < NextIndexIndex; IndexIndex += 6) {
+	for (unsigned int IndexIndex = 0; IndexIndex < NextIndexIndex; IndexIndex += 3) {
 
 		InputVertex* P1 = &VertexBuffer[IndexBuffer[IndexIndex + 0]];
 		InputVertex* P2 = &VertexBuffer[IndexBuffer[IndexIndex + 1]];
 		InputVertex* P3 = &VertexBuffer[IndexBuffer[IndexIndex + 2]];
-		InputVertex* P4 = &VertexBuffer[IndexBuffer[IndexIndex + 5]];
 
 		AddLine(P1, P2);
 		AddLine(P2, P3);
 		AddLine(P3, P1);
-		AddLine(P3, P4);
-		AddLine(P4, P2);
 	}
+}
+
+bool Geo3DViewForm::GenerateConcaveHull(vector<Point>& Dest, int StartX, int StartY, int TurnDirection)
+{
+	POINT FirstPoint = { StartX, StartY };
+
+	SetPointUsageCount(FirstPoint.x, FirstPoint.y, 0);
+	Dest.push_back({ FirstPoint.x, FirstPoint.y });
+
+	POINT CurrentPoint = FirstPoint;
+	POINT Direction = { 1, 0 };
+
+	while (true) {
+
+		POINT NextPoint = AddPoint(CurrentPoint, Direction);
+
+		if (Equals(NextPoint, FirstPoint))
+			break;
+
+		uint8_t NextValue = GetPointUsage(NextPoint.x, NextPoint.y).UsageCount;
+		if (NextValue == 1) {
+
+			CurrentPoint = NextPoint;
+			SetPointUsageCount(CurrentPoint.x, CurrentPoint.y, 0);
+
+			// turn right
+			Direction = CrossProduct(Direction, TurnDirection);
+
+			Dest.push_back({ CurrentPoint.x, CurrentPoint.y });
+		}
+		else
+		if (NextValue == 2) {
+
+			// diagonal case
+			if (
+				IsCellInUsageBound(NextPoint.x - 1, NextPoint.y - 1) && 
+				(GetPointUsage(NextPoint.x, NextPoint.y).IsSet == GetPointUsage(NextPoint.x - 1, NextPoint.y - 1).IsSet)
+				) {
+
+				CurrentPoint = NextPoint;
+				SetPointUsageCount(CurrentPoint.x, CurrentPoint.y, 1);
+
+				// turn right
+				Direction = CrossProduct(Direction, TurnDirection);
+
+				Dest.push_back({ CurrentPoint.x, CurrentPoint.y });
+			}
+			else {
+				// skip colinear point
+
+				CurrentPoint = NextPoint;
+				SetPointUsageCount(CurrentPoint.x, CurrentPoint.y, 0);
+			}
+		}
+		else
+		if (NextValue == 3) {
+
+			CurrentPoint = NextPoint;
+			SetPointUsageCount(CurrentPoint.x, CurrentPoint.y, 0);
+
+			// turn left
+			Direction = CrossProduct(Direction, -TurnDirection);
+
+			Dest.push_back({ CurrentPoint.x, CurrentPoint.y });
+		}
+		else 
+			throw new runtime_error("Unexpected value in flood fill");
+	}
+
+	return true;
+}
+
+bool Geo3DViewForm::GenerateConcaveHullAndHolesFromUsageMap(void)
+{
+	SeparatedPoints.clear();
+	Points.clear();
+
+	POINT FirstPoint;
+	if (!FindPointByUsageCount(1, FirstPoint))
+		return true;
+
+	vector<Point> Hull;
+	if (!GenerateConcaveHull(Hull, FirstPoint.x, FirstPoint.y, 1))
+		return false;
+
+	SeparatedPoints.push_back(Hull);
+	Points.insert(Points.end(), Hull.begin(), Hull.end());
+
+	while (true) {
+
+		POINT FirstPoint;
+		
+		if (!FindPointByUsageCount(3, FirstPoint))
+			break;
+
+		vector<Point> Hole;
+		if (!GenerateConcaveHull(Hole, FirstPoint.x, FirstPoint.y, -1))
+			return false;
+
+		SeparatedPoints.push_back(Hole);
+		Points.insert(Points.end(), Hole.begin(), Hole.end());
+	}
+
+	return true;
+}
+
+bool Geo3DViewForm::GenerateModelFromUsageMap(void)
+{
+	if (!GenerateConcaveHullAndHolesFromUsageMap()) {
+		assert(false);
+		return false;
+	}
+
+	Indices = mapbox::earcut<uint32_t>(SeparatedPoints);
+
+	return true;
 }
 
 void Geo3DViewForm::SetupFloodFillStack(int StackSize)
@@ -867,7 +997,7 @@ void Geo3DViewForm::ResetPointUsageMap(int CenterGridX, int CenterGridY, bool Ce
 	PointUsageMapGridX = CenterX ? CenterGridX - (PointUsageMapWidth  / 2) : CenterGridX;
 	PointUsageMapGridY = CenterY ? CenterGridY - (PointUsageMapHeight / 2) : CenterGridY;
 
-	PointUsageMapUsedBoundBox = { };
+	PointUsageMapUsedBoundBox = { MAXLONG32, MAXLONG32, MINLONG32, MINLONG32 };
 }
 
 #define GET_USAGE_MAP_INDEX \
@@ -875,6 +1005,8 @@ MapX * PointUsageMapHeight + MapY;
 
 void Geo3DViewForm::ApplyGridCellToPointUsageMap(int GridX, int GridY)
 {
+	assert(IsCellInUsageBound(GridX, GridY));
+
 	int MapX = GridX - PointUsageMapGridX;
 	int MapY = GridY - PointUsageMapGridY;
 	int Index = GET_USAGE_MAP_INDEX;
@@ -914,12 +1046,20 @@ inline int16_t GridZToHeight(int GridZ) {
 
 void Geo3DViewForm::ApplyHeightRangeToPointUsageMap(int GridX, HeightRange* Range)
 {
-	for (int GridZ = GetGridZ(Range->Start); GridZ < GetGridZ(Range->End); GridZ++)
-		ApplyGridCellToPointUsageMap(GridX, GridZ);
+	for (int GridZ = GetGridZ(Range->Start); GridZ < GetGridZ(Range->End); GridZ++) 
+		if (IsCellInUsageBound(GridX, GridZ)) 
+			ApplyGridCellToPointUsageMap(GridX, GridZ);
+		else {
+			// should not normally happen
+			assert(false);
+			break;
+		}
 }
 
 UsageInfo Geo3DViewForm::GetPointUsage(int GridX, int GridY)
 {
+	assert(IsPointInUsageBound(GridX, GridY));
+
 	int MapX = GridX - PointUsageMapGridX;
 	int MapY = GridY - PointUsageMapGridY;
 	int Index = GET_USAGE_MAP_INDEX;
@@ -927,12 +1067,43 @@ UsageInfo Geo3DViewForm::GetPointUsage(int GridX, int GridY)
 	return PointUsageMap[Index];
 }
 
+void Geo3DViewForm::SetPointUsageCount(int GridX, int GridY, uint8_t UsageCount)
+{
+	assert(IsPointInUsageBound(GridX, GridY));
+
+	int MapX = GridX - PointUsageMapGridX;
+	int MapY = GridY - PointUsageMapGridY;
+	int Index = GET_USAGE_MAP_INDEX;
+
+	PointUsageMap[Index].UsageCount = UsageCount;
+}
+
 bool Geo3DViewForm::IsCellInUsageBound(int GridX, int GridY)
 {
 	int MapX = GridX - PointUsageMapGridX;
 	int MapY = GridY - PointUsageMapGridY;
 
-	return (MapX >= 0 && MapX + 1 < PointUsageMapWidth && MapY >= 0 && MapY + 1 < PointUsageMapHeight);
+	return (MapX >= 0 && MapX + 1 < (int32_t)PointUsageMapWidth && MapY >= 0 && MapY + 1 < (int32_t)PointUsageMapHeight);
+}
+
+bool Geo3DViewForm::IsPointInUsageBound(int GridX, int GridY)
+{
+	int MapX = GridX - PointUsageMapGridX;
+	int MapY = GridY - PointUsageMapGridY;
+
+	return (MapX >= 0 && MapX < (int32_t)PointUsageMapWidth && MapY >= 0 && MapY < (int32_t)PointUsageMapHeight);
+}
+
+bool Geo3DViewForm::FindPointByUsageCount(uint8_t UsageCount, POINT& Point)
+{
+	for (int GridX = PointUsageMapUsedBoundBox.left; GridX < PointUsageMapUsedBoundBox.right; GridX++)
+		for (int GridY = PointUsageMapUsedBoundBox.top; GridY < PointUsageMapUsedBoundBox.bottom; GridY++) 
+			if (GetPointUsage(GridX, GridY).UsageCount == UsageCount) {
+				Point = { GridX, GridY };
+				return true;
+			}
+
+	return false;
 }
 
 void Geo3DViewForm::FinalizePointUsageMap(void)
@@ -1011,12 +1182,38 @@ void Geo3DViewForm::GenerateTopPlanes(int GridX, int GridY)
 				break;		
 		}
 
-		XMFLOAT3 Color = GetRandomColor();
+		XMFLOAT3 Color = { 1, 1, 1 };
 
-		for (int X = PointUsageMapUsedBoundBox.left; X < PointUsageMapUsedBoundBox.right; X++)
-			for (int Y = PointUsageMapUsedBoundBox.top; Y < PointUsageMapUsedBoundBox.bottom; Y++)
+		if (!GenerateModelFromUsageMap())
+			throw new runtime_error("Couldn't generate model for top plane");
+
+		uint32_t VertexOffset = NextVertexIndex;
+		for (int Index = 0; Index < Points.size(); Index++) {
+
+			Point P = Points[Index];
+
+			uint32_t VertexIndex = AllocateVertexIndex();
+
+			InputVertex *Vertex = &VertexBuffer[VertexIndex];
+
+			Vertex->Pos = { (float)P[0], (float)P[1], (float)GET_GEO_HEIGHT(SubBlock) * 0.1f };
+#ifdef DEBUG_USE_RANDOM_COLORS
+			Vertex->Color = GetRandomColor();
+#else
+			Vertex->Color = Color;
+#endif
+			Vertex->Normal = { 0, 0, 1 };
+		}
+
+		for (int Index = 0; Index < Indices.size(); Index++)
+			AllocateIndexIndex(VertexOffset + Indices[Index]);
+
+		/*
+		for (int X = PointUsageMapUsedBoundBox.left; X < PointUsageMapUsedBoundBox.right - 1; X++)
+			for (int Y = PointUsageMapUsedBoundBox.top; Y < PointUsageMapUsedBoundBox.bottom - 1; Y++)
 				if (GetPointUsage(X, Y).IsSet)
 					AddPlane(X, Y, SubBlock, Color);
+					*/
 	}
 }
 
@@ -1052,7 +1249,7 @@ void Geo3DViewForm::GetHeightRanges(int GridX, int GridY, int OffsetX, int Offse
 			int16_t Height1 = GET_GEO_HEIGHT(Layers1[Index1]);
 			int16_t Height2 = GET_GEO_HEIGHT(Layers2[Index2]);
 
-			bool ShouldPlaceWall = true;
+			bool ShouldPlaceWall = Height1 != Height2;
 			int MinDist = 16 * 3;
 
 			if (ShouldPlaceWall && Index1 < LayersCount1 - 1) {
@@ -1100,9 +1297,26 @@ void Geo3DViewForm::GetHeightRanges(int GridX, int GridY, int OffsetX, int Offse
 
 void Geo3DViewForm::GenerateSidePlanes(int GridX, int GridY, int OffsetX, int OffsetY)
 {
+	/*
+	HeightRange Ranges[L2Geodata::LAYERS_PER_SUBBLOCK_LIMIT];
+	int RangesCount;
+
+	GetHeightRanges(GridX, GridY, OffsetX, OffsetY, Ranges, RangesCount);
+
+	for (int RangeIndex = 0; RangeIndex < RangesCount; RangeIndex++) {
+
+		HeightRange *Range = &Ranges[RangeIndex];
+
+		XMFLOAT3 Color = { 0, 0, 1 };
+
+		AddSidePlane(GridX, GridY, Range->Start, Range->End, OffsetX, OffsetY, Color);
+	}
+
+	return;
+	*/
+
 	assert((OffsetX ^ OffsetY) == 1);
 
-	POINT CurrentPoint = { GridX, GridY };
 	POINT Direction = { OffsetY, OffsetX };
 	bool DynamicX = Direction.x != 0;
 	int Side = OffsetX + 2 * OffsetY;
@@ -1110,11 +1324,18 @@ void Geo3DViewForm::GenerateSidePlanes(int GridX, int GridY, int OffsetX, int Of
 	HeightRange StartRanges[L2Geodata::LAYERS_PER_SUBBLOCK_LIMIT];
 	int StartRangesCount;
 
-	GetHeightRanges(CurrentPoint.x, CurrentPoint.y, OffsetX, OffsetY, StartRanges, StartRangesCount);
+	GetHeightRanges(GridX, GridY, OffsetX, OffsetY, StartRanges, StartRangesCount);
+	if (StartRangesCount == 0)
+		return;
+
+	int GridZ = GetGridZ(GetMeanHeight(StartRanges, StartRangesCount));
 
 	for (int16_t StartHeightIndex = 0; StartHeightIndex < StartRangesCount; StartHeightIndex++) {
 
-		ResetPointUsageMap(DynamicX ? CurrentPoint.x : CurrentPoint.y, 0, true, true);
+		int PlaneDirection = StartRanges[StartHeightIndex].Direction;
+		POINT CurrentPoint = { GridX, GridY };
+
+		ResetPointUsageMap(DynamicX ? CurrentPoint.x : CurrentPoint.y, GridZ, true, true);
 		ResetFloodFillStack();
 
 		PushGridCell(DynamicX ? CurrentPoint.x : CurrentPoint.y, StartHeightIndex);
@@ -1127,15 +1348,10 @@ void Geo3DViewForm::GenerateSidePlanes(int GridX, int GridY, int OffsetX, int Of
 
 			CurrentPoint = { DynamicX ? P.x : GridX, !DynamicX ? P.x : GridY };
 			int16_t HeightIndex = (int16_t) P.y;
+			assert(HeightIndex >= 0 && HeightIndex < L2Geodata::LAYERS_PER_SUBBLOCK_LIMIT);
 
 			if (GetGridUsage(CurrentPoint.x, CurrentPoint.y, Side, HeightIndex))
 				continue;
-
-			if (!IsCellInUsageBound(DynamicX ? CurrentPoint.x : CurrentPoint.y, HeightIndex)) {
-				// should not normally happen
-				assert(false);
-				continue;
-			}
 
 			HeightRange CurrentRanges[L2Geodata::LAYERS_PER_SUBBLOCK_LIMIT];
 			int CurrentRangesCount;
@@ -1149,12 +1365,38 @@ void Geo3DViewForm::GenerateSidePlanes(int GridX, int GridY, int OffsetX, int Of
 			PushHeightRangeNeighborsBothSides(CurrentPoint.x, CurrentPoint.y, OffsetX, OffsetY, Direction, CurrentRange);
 		}
 
-		XMFLOAT3 Color = GetRandomColor();
+		XMFLOAT3 Color = { 1, 1, 1 };
 
-		for (int X = PointUsageMapUsedBoundBox.left; X < PointUsageMapUsedBoundBox.right; X++)
-			for (int Z = PointUsageMapUsedBoundBox.top; Z < PointUsageMapUsedBoundBox.bottom; Z++)
+		if (!GenerateModelFromUsageMap())
+			throw new runtime_error("Couldn't generate model for side plane");
+
+		uint32_t VertexOffset = NextVertexIndex;
+		for (int Index = 0; Index < Points.size(); Index++) {
+
+			Point P = Points[Index];
+
+			uint32_t VertexIndex = AllocateVertexIndex();
+
+			InputVertex *Vertex = &VertexBuffer[VertexIndex];
+
+			Vertex->Pos = { (float)(DynamicX ? P[0] : GridX + 1), (float)(!DynamicX ? P[0] : GridY + 1), (float)GridZToHeight(P[1]) * 0.1f };
+#ifdef DEBUG_USE_RANDOM_COLORS
+			Vertex->Color = GetRandomColor();
+#else
+			Vertex->Color = Color;
+#endif
+			Vertex->Normal = { (float)(OffsetX * -PlaneDirection), (float)(OffsetY * -PlaneDirection), 0 };
+		}
+
+		for (int Index = 0; Index < Indices.size(); Index++) 
+			AllocateIndexIndex(VertexOffset + Indices[Index]);
+		
+		/*
+		for (int X = PointUsageMapUsedBoundBox.left; X < PointUsageMapUsedBoundBox.right - 1; X++)
+			for (int Z = PointUsageMapUsedBoundBox.top; Z < PointUsageMapUsedBoundBox.bottom - 1; Z++)
 				if (GetPointUsage(X, Z).IsSet)
-					AddSidePlane(DynamicX ? X : GridX, !DynamicX ? X : GridY, GridZToHeight(Z), GridZToHeight(Z + 1), OffsetX, OffsetY, Color);
+					AddSidePlane(DynamicX ? X : GridX, !DynamicX ? X : GridY, GridZToHeight(Z), GridZToHeight(Z + 1), OffsetX, OffsetY, PlaneDirection, Color);		 
+		*/
 	}
 }
 
@@ -1178,7 +1420,7 @@ void Geo3DViewForm::SetupGenerationGrid(int32_t WorldX, int32_t WorldY, uint32_t
 
 bool Geo3DViewForm::IsInGridBound(int GridX, int GridY)
 {
-	return (GridX >= 0 && GridX < GridWidth && GridY >= 0 && GridY < GridHeight);
+	return (GridX >= 0 && GridX < (int32_t)GridWidth && GridY >= 0 && GridY < (int32_t)GridHeight);
 }
 
 #define GET_GRID_BIT_INDEX \
@@ -1233,11 +1475,14 @@ void Geo3DViewForm::GenerateGeodataScene(int32_t WorldX, int32_t WorldY, uint32_
 	LinesStartIndex = NextVertexIndex;
 
 	// VisualizeNormals();
-	VisualizeTriangles();
+	// VisualizeTriangles();
 
 	CommitScene();
 
 	FinalizeGenerationGrid();
+
+	cout << NextVertexIndex << " verticies was used" << endl;
+	cout << NextIndexIndex << " indices was used" << endl;
 }
 
 void Geo3DViewForm::ProcessMouseInput(LONG dx, LONG dy) {

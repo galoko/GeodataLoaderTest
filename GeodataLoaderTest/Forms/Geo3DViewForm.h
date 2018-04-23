@@ -6,7 +6,11 @@
 #include <DirectXMath.h>
 
 #define _USE_MATH_DEFINES
-#include <cmath> 
+#include <cmath>
+
+#include <array>
+
+#include "earcut.hpp"
 
 #include "Geodata\L2Geodata.h"
 
@@ -16,6 +20,8 @@ struct InputVertex;
 struct NeighborInfo;
 struct UsageInfo;
 struct HeightRange;
+
+using Point = array<int32_t, 2>;
 
 class Geo3DViewForm {
 private:
@@ -37,9 +43,14 @@ private:
 	static void AddLine(InputVertex *P1, InputVertex *P2);
 	static void AddTriangleStrip(const int32_t Strip[], int Length);
 	static void AddPlane(int GridX, int GridY, int16_t Height, XMFLOAT3& Color);
-	static void AddSidePlane(int GridX, int GridY, int16_t Height, int16_t DestHeight, int OffsetX, int OffsetY, XMFLOAT3& Color);
+	static void AddSidePlane(int GridX, int GridY, int16_t Height, int16_t DestHeight, int OffsetX, int OffsetY, int PlaneDirection, XMFLOAT3& Color);
+
 	static void VisualizeNormals(void);
 	static void VisualizeTriangles(void);
+
+	static bool GenerateConcaveHull(vector<Point>& Dest, int StartX, int StartY, int TurnDirection);
+	static bool GenerateConcaveHullAndHolesFromUsageMap(void);
+	static bool GenerateModelFromUsageMap(void);
 
 	static void SetupFloodFillStack(int StackSize);
 	static void ResetFloodFillStack(void);
@@ -55,7 +66,10 @@ private:
 	static void ApplyGridCellToPointUsageMap(int GridX, int GridY);
 	static void ApplyHeightRangeToPointUsageMap(int GridX, HeightRange *Range);
 	static UsageInfo GetPointUsage(int GridX, int GridY);
+	static void SetPointUsageCount(int GridX, int GridY, uint8_t UsageCount);
 	static bool IsCellInUsageBound(int GridX, int GridY);
+	static bool IsPointInUsageBound(int GridX, int GridY);
+	static bool FindPointByUsageCount(uint8_t UsageCount, POINT& Point);
 	static void FinalizePointUsageMap(void);
 
 	static void GenerateTopPlanes(int GridX, int GridY);

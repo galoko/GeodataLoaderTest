@@ -40,7 +40,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance
 	Geo3DViewForm::Init(1280, 960, L"Geo3DView", L"Geodata 3D View", hInstance);
 	Geo3DViewForm::Show();
 
-	Run(60.0, Tick);
+	Run(0.0, Tick);
 
 	return 0;
 }

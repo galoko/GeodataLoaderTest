@@ -162,6 +162,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="earcut.hpp" />
     <ClInclude Include="Forms\Geo3DViewForm.h" />
     <ClInclude Include="GeodataLoaderTest.h" />
     <ClInclude Include="Geodata\L2Geodata.h" />

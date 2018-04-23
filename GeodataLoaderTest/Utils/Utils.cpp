@@ -96,6 +96,11 @@ LONG TimeToMs(LONGLONG Time) {
 	return (LONG)(Time * 1000 / Freq.QuadPart);
 }
 
+double TimeToSeconds(LONGLONG Time) {
+
+	return (double)Time / (double)Freq.QuadPart;
+}
+
 LONGLONG GetTime(void) {
 
 	LARGE_INTEGER Result;
@@ -149,10 +154,16 @@ typedef void(*TickCallback)(double dt);
 
 void Run(double FPS, TickCallback Callback) {
 
-	double Dt = 1.0 / 60.0;
+	double Dt;
+
+	if (FPS != 0.0)
+		Dt = 1.0 / FPS;
+	else
+		Dt = 0.0;
 
 	LONGLONG StartTime = GetTime();
 	LONGLONG TickCounter = 0;
+	LONGLONG LastTick = GetTime();
 
 	// Main message loop:
 	while (TRUE)
@@ -163,16 +174,31 @@ void Run(double FPS, TickCallback Callback) {
 		LONGLONG Now = GetTime();
 		while (TRUE) {
 
-			NextTickTime = StartTime + SecondsToTime(TickCounter * Dt);
-			if (Now >= NextTickTime) {
+			if (Dt == 0.0) {
+
+				LONGLONG Now = GetTime();
+				double Elapsed = TimeToSeconds(Now - LastTick);
+				LastTick = Now;
 
 				if (Callback)
-					Callback(Dt);
+					Callback(Elapsed);
 
-				TickCounter++;
-			}
-			else
+				NextTickTime = StartTime;
+
 				break;
+			}
+			else {
+				NextTickTime = StartTime + SecondsToTime(TickCounter * Dt);
+				if (Now >= NextTickTime) {
+
+					if (Callback)
+						Callback(Dt);
+
+					TickCounter++;
+				}
+				else
+					break;
+			}
 		}
 
 		if (!ProcessMessages())
