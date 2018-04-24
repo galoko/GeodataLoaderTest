@@ -1,5 +1,7 @@
 #include "stdafx.h"
 
+#define USE_TOOTLE
+
 #include "Geo3DViewForm.h"
 
 #include "FormsUtils.h"
@@ -8,7 +10,12 @@
 #include <iostream>
 #include <D3Dcompiler.h>
 
+#ifdef USE_TOOTLE
+#include "tootlelib.h"
+#endif
+
 #include <algorithm>
+
 
 #pragma comment (lib, "d3d11.lib")
 #pragma comment(lib,"d3dcompiler.lib")
@@ -17,11 +24,11 @@
 #undef NO_LIGHTING
 #undef VERBOSE_LOG
 
+#pragma pack(push,1)
 struct InputVertex
 {
 	XMFLOAT3 Pos;
 	XMFLOAT3 Color;
-	XMFLOAT3 Normal;
 
 	InputVertex() {
 	}
@@ -29,6 +36,7 @@ struct InputVertex
 	InputVertex(float x, float y, float z, float r, float g, float b) : Pos(x, y, z), Color(r, g, b) {
 	}
 };
+#pragma pack(pop)
 
 static unsigned int Width, Height;
 
@@ -52,14 +60,6 @@ static XMMATRIX ViewMatrix;
 static XMMATRIX ProjectionMatrix;
 static ID3D11Buffer *ShaderMatrixRef;
 static ID3D11SamplerState* Sampler;
-
-struct ShaderOptions {
-	float LigthEnabled;
-	XMFLOAT3 LightDirection;
-};
-
-static ID3D11Buffer *ShaderOptionsRef;
-static ShaderOptions Options;
 
 static ID3D11Buffer *SceneVertexBuffer;
 static ID3D11Buffer *SceneIndexBuffer;
@@ -114,6 +114,8 @@ static bool DrawTrianglesAsLines;
 static bool PressedKeys[KEYS_COUNT];
 static bool InFocus;
 static float MoveSpeed = 30.0f;
+
+static XMVECTOR LightDirection;
 
 inline POINT CrossProduct(POINT P, int S) {
 	return { -P.y * S, P.x * S };
@@ -261,10 +263,9 @@ void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowC
 		throw new std::runtime_error("Couldn't create pixel shader");
 
 	// creating input layout
-	static const D3D11_INPUT_ELEMENT_DESC VertexLayoutDesc[3] = {
+	static const D3D11_INPUT_ELEMENT_DESC VertexLayoutDesc[2] = {
 		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0,  0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
-		{ "COLOR",    0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0 },
-		{ "NORMAL",   0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 24, D3D11_INPUT_PER_VERTEX_DATA, 0 }
+		{ "COLOR",    0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0 }
 	};
 
 	res = DirectDevice->CreateInputLayout(VertexLayoutDesc, sizeof(VertexLayoutDesc) / sizeof(*VertexLayoutDesc),
@@ -325,7 +326,7 @@ void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowC
 
 	D3D11_RASTERIZER_DESC CullModeDesc = {};
 	CullModeDesc.FillMode = D3D11_FILL_SOLID;
-	CullModeDesc.CullMode = D3D11_CULL_NONE;
+	CullModeDesc.CullMode = D3D11_CULL_FRONT;
 	CullModeDesc.FrontCounterClockwise = true;
 	res = DirectDevice->CreateRasterizerState(&CullModeDesc, &CullMode);
 	if (FAILED(res))
@@ -362,16 +363,6 @@ void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowC
 
 	DirectDeviceCtx->VSSetConstantBuffers(0, 1, &ShaderMatrixRef);
 
-	D3D11_BUFFER_DESC OptionsDesc = {};
-	OptionsDesc.Usage = D3D11_USAGE_DEFAULT;
-	OptionsDesc.ByteWidth = sizeof(ShaderOptions);
-	OptionsDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-	res = DirectDevice->CreateBuffer(&OptionsDesc, NULL, &ShaderOptionsRef);
-	if (FAILED(res))
-		throw new std::runtime_error("Couldn't create shader options buffer");
-
-	DirectDeviceCtx->PSSetConstantBuffers(1, 1, &ShaderOptionsRef);
-
 	// setup frame
 	DirectDeviceCtx->OMSetRenderTargets(1, &RenderTargetView, DepthStencilView);
 
@@ -397,7 +388,7 @@ void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowC
 
 	// setup matrices
 
-	ProjectionMatrix = XMMatrixPerspectiveFovLH(0.5f * (float)M_PI, (float)Width / (float)Height, 0.1f, 1000.0f);
+	ProjectionMatrix = XMMatrixPerspectiveFovLH(0.5f * (float)M_PI, (float)Width / (float)Height, 0.1f, 4500.0f);
 
 	BuildViewMatrix();
 	BuildWorldMatrix();
@@ -406,6 +397,12 @@ void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowC
 
 	VertexBuffer = new InputVertex[MAX_VERTICES];
 	IndexBuffer = new uint32_t[MAX_INDEXES];
+
+	LightDirection = -XMVector3Normalize(XMVectorSet(-0.512651205f, 0.189535633f, -0.837415695f, 1.0f));
+
+#ifdef USE_TOOTLE
+	TootleInit();
+#endif
 
 	// GenerateDebugStaticScene();
 
@@ -527,7 +524,113 @@ void Geo3DViewForm::ResetScene(void)
 	TrianglesLinesStartIndex = 0;
 }
 
+#ifdef USE_TOOTLE
+void DisplayTootleErrorMessage(TootleResult Result, string OperationName)
+{
+	cout << "Tootle returned error from " + OperationName + ": " << endl;
+
+	switch (Result)
+	{
+	case NA_TOOTLE_RESULT:
+		cout << " NA_TOOTLE_RESULT" << endl;
+		break;
+
+	case TOOTLE_OK:
+		break;
+
+	case TOOTLE_INVALID_ARGS:
+		cout << " TOOTLE_INVALID_ARGS" << endl;
+		break;
+
+	case TOOTLE_OUT_OF_MEMORY:
+		cout << " TOOTLE_OUT_OF_MEMORY" << endl;
+		break;
+
+	case TOOTLE_3D_API_ERROR:
+		cout << " TOOTLE_3D_API_ERROR" << endl;
+		break;
+
+	case TOOTLE_INTERNAL_ERROR:
+		cout << " TOOTLE_INTERNAL_ERROR" << endl;
+		break;
+
+	case TOOTLE_NOT_INITIALIZED:
+		cout << " TOOTLE_NOT_INITIALIZED" << endl;
+		break;
+	}
+}
+
+void CheckTootleResult(TootleResult Result, string OperationName) {
+	if (Result != TOOTLE_OK) {
+		DisplayTootleErrorMessage(Result, OperationName);
+		throw new runtime_error(OperationName + " failed");
+	}
+}
+
+#endif
+
+size_t GetHash(uint32_t *Data, int Count) {
+
+	hash<uint32_t> Hasher;
+
+	size_t Result = 0;
+
+	for (int Index = 0; Index < Count; Index++)
+		Result = Result * 31 + Hasher(Data[Index]);
+
+	return Result;
+}
+
+void Geo3DViewForm::ApplyTootle(void)
+{
+#ifdef USE_TOOTLE
+	cout << "Start Tootling stuff" << endl;
+
+	int FaceCount = NextIndexIndex / 3;
+
+	std::vector<unsigned int> FaceClusters;
+	FaceClusters.resize(FaceCount + 1);
+	unsigned int ClustersCount;
+
+	/*
+	cout << "TootleClusterMesh start" << endl;
+	CheckTootleResult(TootleClusterMesh(VertexBuffer, IndexBuffer, NextVertexIndex, FaceCount, sizeof(InputVertex), 0, IndexBuffer, &FaceClusters[0],
+		NULL), "ClusterMesh");
+
+	cout << "TootleVCacheClusters start" << endl;
+	CheckTootleResult(TootleVCacheClusters(IndexBuffer, FaceCount, NextVertexIndex, TOOTLE_DEFAULT_VCACHE_SIZE, &FaceClusters[0], IndexBuffer, NULL,
+		TOOTLE_VCACHE_DIRECT3D), "VCacheClusters");
+
+	cout << "TootleOptimizeOverdraw start" << endl;
+	CheckTootleResult(TootleOptimizeOverdraw(VertexBuffer, IndexBuffer, NextVertexIndex, FaceCount, sizeof(InputVertex), NULL, 0, TOOTLE_CCW,
+		&FaceClusters[0], IndexBuffer, NULL, TOOTLE_OVERDRAW_FAST), "OptimizeOverdraw");
+	*/
+
+	/*
+	cout << "TootleFastOptimize start" << endl;
+	CheckTootleResult(TootleFastOptimize(VertexBuffer, IndexBuffer, NextVertexIndex, FaceCount, sizeof(InputVertex), TOOTLE_DEFAULT_VCACHE_SIZE,
+		TOOTLE_CCW, IndexBuffer, NULL, TOOTLE_DEFAULT_ALPHA), "FastOptimize");
+	*/
+
+	cout << "TootleFastOptimizeVCacheAndClusterMesh start" << endl;
+	CheckTootleResult(TootleFastOptimizeVCacheAndClusterMesh(IndexBuffer, FaceCount, NextVertexIndex, TOOTLE_DEFAULT_VCACHE_SIZE, IndexBuffer,
+		&FaceClusters[0], &ClustersCount, TOOTLE_DEFAULT_ALPHA), "FastOptimizeVCacheAndClusterMesh");
+
+	cout << "TootleOptimizeOverdraw start" << endl;
+	CheckTootleResult(TootleOptimizeOverdraw(VertexBuffer, IndexBuffer, NextVertexIndex, FaceCount, sizeof(InputVertex), NULL, 0,
+		TOOTLE_CCW, &FaceClusters[0], IndexBuffer, NULL, TOOTLE_OVERDRAW_FAST), "OptimizeOverdraw");
+
+	cout << "TootleOptimizeVertexMemory start" << endl;
+	CheckTootleResult(TootleOptimizeVertexMemory(VertexBuffer, IndexBuffer, NextVertexIndex, FaceCount, sizeof(InputVertex), VertexBuffer, IndexBuffer,
+		NULL), "OptimizeVertexMemory");
+
+	// cout << "Start hash: " << StartHash << ", final hash: " << FinalHash << endl;
+#endif
+}
+
 void Geo3DViewForm::CommitScene(void) {
+
+	// ApplyTootle();
 
 	D3D11_BOX Region = { };
 	Region.bottom = 1;
@@ -644,6 +747,31 @@ void Geo3DViewForm::GetNeighbors(int GridX, int GridY, int16_t LayersCount, int1
 		}
 }
 
+XMFLOAT3 Geo3DViewForm::BakeLightColor(XMVECTOR TextureColor, XMVECTOR Normal)
+{
+	XMVECTOR AmbientColor = { 0.125f, 0.125f, 0.75f, 1.0f };
+	XMVECTOR DiffuseColor = { 0.5f, 0.5f, 75.0f, 1.0f };
+
+	XMVECTOR Color = AmbientColor;
+
+	float LightIntensity = min(max(0.0f, XMVector3Dot(Normal, LightDirection).m128_f32[0]), 1.0f);
+
+	if (LightIntensity > 0.0f)
+	{
+		// Determine the final diffuse color based on the diffuse color and the amount of light intensity.
+		Color += DiffuseColor * LightIntensity;
+	}
+
+	Color = XMVectorClamp(Color, { 0, 0, 0, 0 }, { 1, 1, 1, 1 });
+
+	Color *= TextureColor;
+
+	XMFLOAT3 Result;
+	XMStoreFloat3(&Result, Color);
+
+	return Result;
+}
+
 float GetRandomFloat(void) {
 	return (float)rand() / RAND_MAX;
 }
@@ -704,7 +832,7 @@ void Geo3DViewForm::AddPlane(int GridX, int GridY, int16_t SubBlock, XMFLOAT3& C
 		#else
 			Vertex->Color = Color;
 		#endif
-			Vertex->Normal = { 0, 0, 1 };
+			// Vertex->Normal = { 0, 0, 1 };
 
 			TriangleStrip[TriangleStripIndex++] = VertexIndex;
 		}
@@ -738,7 +866,7 @@ void Geo3DViewForm::AddSidePlane(int GridX, int GridY, int16_t Height, int16_t D
 #else
 			Vertex->Color = Color;
 #endif
-			Vertex->Normal = {(float)(OffsetX * -PlaneDirection), (float)(OffsetY * -PlaneDirection), 0 };
+			// Vertex->Normal = {(float)(OffsetX * -PlaneDirection), (float)(OffsetY * -PlaneDirection), 0 };
 
 			TriangleStrip[TriangleStripIndex++] = VertexIndex;
 		}
@@ -751,6 +879,7 @@ void Geo3DViewForm::VisualizeNormals(void)
 	NormalsStartIndex = NextVertexIndex;
 	for (unsigned int VertexIndex = 0; VertexIndex < LinesStartIndex; VertexIndex++) {
 
+		/*
 		InputVertex* Vertex = &VertexBuffer[VertexIndex];
 
 		int32_t L1 = AllocateVertexIndex();
@@ -768,6 +897,7 @@ void Geo3DViewForm::VisualizeNormals(void)
 		XMStoreFloat3(&VertexBuffer[L2].Pos, Position);
 		VertexBuffer[L2].Color = Vertex->Normal;
 		VertexBuffer[L2].Normal = { 0, 0, 1 };
+		*/
 	}
 }
 
@@ -987,21 +1117,32 @@ void Geo3DViewForm::SetupPointUsageMap(int MapWidth, int MapHeight)
 	PointUsageMapGridX = 0;
 	PointUsageMapGridY = 0;
 
-	PointUsageMap = (UsageInfo*)malloc(PointUsageMapWidth * PointUsageMapHeight * sizeof(UsageInfo));
-}
-
-void Geo3DViewForm::ResetPointUsageMap(int CenterGridX, int CenterGridY, bool CenterX, bool CenterY)
-{
-	memset(PointUsageMap, 0, PointUsageMapWidth * PointUsageMapHeight * sizeof(UsageInfo));
-
-	PointUsageMapGridX = CenterX ? CenterGridX - (PointUsageMapWidth  / 2) : CenterGridX;
-	PointUsageMapGridY = CenterY ? CenterGridY - (PointUsageMapHeight / 2) : CenterGridY;
+	PointUsageMap = (UsageInfo*)calloc(PointUsageMapWidth * PointUsageMapHeight, sizeof(UsageInfo));
 
 	PointUsageMapUsedBoundBox = { MAXLONG32, MAXLONG32, MINLONG32, MINLONG32 };
 }
 
 #define GET_USAGE_MAP_INDEX \
 MapX * PointUsageMapHeight + MapY;
+
+void Geo3DViewForm::ResetPointUsageMap(int CenterGridX, int CenterGridY, bool CenterX, bool CenterY)
+{
+	for (int GridX = PointUsageMapUsedBoundBox.left; GridX < PointUsageMapUsedBoundBox.right; GridX++)
+		for (int GridY = PointUsageMapUsedBoundBox.top; GridY < PointUsageMapUsedBoundBox.bottom; GridY++) {
+
+			int MapX = GridX - PointUsageMapGridX;
+			int MapY = GridY - PointUsageMapGridY;
+			int Index = GET_USAGE_MAP_INDEX;
+
+			PointUsageMap[Index].IsSet = 0;
+			PointUsageMap[Index].UsageCount = 0;
+		}
+
+	PointUsageMapGridX = CenterX ? CenterGridX - (PointUsageMapWidth  / 2) : CenterGridX;
+	PointUsageMapGridY = CenterY ? CenterGridY - (PointUsageMapHeight / 2) : CenterGridY;
+
+	PointUsageMapUsedBoundBox = { MAXLONG32, MAXLONG32, MINLONG32, MINLONG32 };
+}
 
 void Geo3DViewForm::ApplyGridCellToPointUsageMap(int GridX, int GridY)
 {
@@ -1044,16 +1185,21 @@ inline int16_t GridZToHeight(int GridZ) {
 	return GridZ * L2Geodata::HEIGHT_RESOLUTION;
 }
 
-void Geo3DViewForm::ApplyHeightRangeToPointUsageMap(int GridX, HeightRange* Range)
+bool Geo3DViewForm::ApplyHeightRangeToPointUsageMap(int GridX, HeightRange* Range)
 {
-	for (int GridZ = GetGridZ(Range->Start); GridZ < GetGridZ(Range->End); GridZ++) 
-		if (IsCellInUsageBound(GridX, GridZ)) 
+	int FirstGridZ = GetGridZ(Range->Start);
+	int LastGridZ = GetGridZ(Range->End) - 1;
+
+	if (!IsCellInUsageBound(GridX, FirstGridZ) || !IsCellInUsageBound(GridX, LastGridZ))
+		return false;
+
+	for (int GridZ = FirstGridZ; GridZ <= LastGridZ; GridZ++)
+		if (IsCellInUsageBound(GridX, GridZ))
 			ApplyGridCellToPointUsageMap(GridX, GridZ);
-		else {
-			// should not normally happen
-			assert(false);
-			break;
-		}
+		else
+			throw new runtime_error("ApplyHeightRangeToPointUsageMap out of bound");
+
+	return true;
 }
 
 UsageInfo Geo3DViewForm::GetPointUsage(int GridX, int GridY)
@@ -1182,7 +1328,7 @@ void Geo3DViewForm::GenerateTopPlanes(int GridX, int GridY)
 				break;		
 		}
 
-		XMFLOAT3 Color = { 1, 1, 1 };
+		XMFLOAT3 Color = BakeLightColor({ 1, 1, 1 }, { 0, 0, 1 });
 
 		if (!GenerateModelFromUsageMap())
 			throw new runtime_error("Couldn't generate model for top plane");
@@ -1202,7 +1348,7 @@ void Geo3DViewForm::GenerateTopPlanes(int GridX, int GridY)
 #else
 			Vertex->Color = Color;
 #endif
-			Vertex->Normal = { 0, 0, 1 };
+			// Vertex->Normal = ;
 		}
 
 		for (int Index = 0; Index < Indices.size(); Index++)
@@ -1360,12 +1506,13 @@ void Geo3DViewForm::GenerateSidePlanes(int GridX, int GridY, int OffsetX, int Of
 
 			HeightRange* CurrentRange = &CurrentRanges[HeightIndex];
 
-			ApplyHeightRangeToPointUsageMap(DynamicX ? CurrentPoint.x : CurrentPoint.y, CurrentRange);
-			SetGridSideUsage(CurrentPoint.x, CurrentPoint.y, Side, HeightIndex);
-			PushHeightRangeNeighborsBothSides(CurrentPoint.x, CurrentPoint.y, OffsetX, OffsetY, Direction, CurrentRange);
+			if (ApplyHeightRangeToPointUsageMap(DynamicX ? CurrentPoint.x : CurrentPoint.y, CurrentRange)) {
+				SetGridSideUsage(CurrentPoint.x, CurrentPoint.y, Side, HeightIndex);
+				PushHeightRangeNeighborsBothSides(CurrentPoint.x, CurrentPoint.y, OffsetX, OffsetY, Direction, CurrentRange);
+			}
 		}
 
-		XMFLOAT3 Color = { 1, 1, 1 };
+		XMFLOAT3 Color = BakeLightColor({ 1, 1, 1 }, { (float)(OffsetX * -PlaneDirection), (float)(OffsetY * -PlaneDirection), 0 });
 
 		if (!GenerateModelFromUsageMap())
 			throw new runtime_error("Couldn't generate model for side plane");
@@ -1385,11 +1532,21 @@ void Geo3DViewForm::GenerateSidePlanes(int GridX, int GridY, int OffsetX, int Of
 #else
 			Vertex->Color = Color;
 #endif
-			Vertex->Normal = { (float)(OffsetX * -PlaneDirection), (float)(OffsetY * -PlaneDirection), 0 };
+			// Vertex->
 		}
 
-		for (int Index = 0; Index < Indices.size(); Index++) 
-			AllocateIndexIndex(VertexOffset + Indices[Index]);
+		
+		if (DynamicX)
+			PlaneDirection = -PlaneDirection;
+
+		if (PlaneDirection == -1) {
+			for (int Index = 0; Index < Indices.size(); Index++)
+				AllocateIndexIndex(VertexOffset + Indices[Index]);
+		}
+		else {
+			for (int Index = Indices.size() - 1; Index >= 0; Index--)
+				AllocateIndexIndex(VertexOffset + Indices[Index]);
+		}
 		
 		/*
 		for (int X = PointUsageMapUsedBoundBox.left; X < PointUsageMapUsedBoundBox.right - 1; X++)
@@ -1408,7 +1565,7 @@ void Geo3DViewForm::SetupGenerationGrid(int32_t WorldX, int32_t WorldY, uint32_t
 	GridWidth = Width / L2Geodata::GEO_COORDS_IN_WORLD_COORDS;
 	GridHeight = Height / L2Geodata::GEO_COORDS_IN_WORLD_COORDS;
 
-	GridUsageMap = (uint8_t*) calloc(1, (GridWidth * GridHeight * 3 * L2Geodata::LAYERS_PER_SUBBLOCK_LIMIT + 7) / 8);
+	GridUsageMap = (uint8_t*) calloc((GridWidth * GridHeight * 3 * L2Geodata::LAYERS_PER_SUBBLOCK_LIMIT + 7) / 8, 1);
 
 	// int MaxCellPerPolygon = (int)(sqrt(GridWidth * GridHeight) / 2); // 50%
 
@@ -1431,6 +1588,8 @@ LayerOrHeightIndex
 
 bool Geo3DViewForm::GetGridUsage(int GridX, int GridY, int Side, int16_t LayerOrHeightIndex)
 {
+	assert(IsInGridBound(GridX, GridY));
+
 	int Index = GET_GRID_BIT_INDEX;
 
 	return (GridUsageMap[Index / 8] >> (Index % 8)) & 1;
@@ -1438,6 +1597,8 @@ bool Geo3DViewForm::GetGridUsage(int GridX, int GridY, int Side, int16_t LayerOr
 
 void Geo3DViewForm::SetGridSideUsage(int GridX, int GridY, int Side, int16_t LayerOrHeightIndex)
 {
+	assert(IsInGridBound(GridX, GridY));
+
 	int Index = GET_GRID_BIT_INDEX;
 
 	GridUsageMap[Index / 8] |= 1 << (Index % 8);
@@ -1615,27 +1776,8 @@ void Geo3DViewForm::DrawScene(void)
 	DirectDeviceCtx->ClearRenderTargetView(RenderTargetView, color);
 	DirectDeviceCtx->ClearDepthStencilView(DepthStencilView, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 
-	XMStoreFloat3(&Options.LightDirection, XMVector3Normalize(XMVectorSet( -0.512651205f, 0.189535633f, -0.837415695f, 1.0f)));
-	
-	if (!DrawTrianglesAsLines) {
-	#ifdef NO_LIGHTING
-		Options.LigthEnabled = 0;
-	#else
-		Options.LigthEnabled = 1;
-	#endif
-		DirectDeviceCtx->UpdateSubresource(ShaderOptionsRef, 0, NULL, &Options, 0, 0);
-
-		DirectDeviceCtx->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-		DirectDeviceCtx->DrawIndexed(NextIndexIndex, 0, 0);
-	}
-
-	Options.LigthEnabled = 0;
-	DirectDeviceCtx->UpdateSubresource(ShaderOptionsRef, 0, NULL, &Options, 0, 0);
-	
-	DirectDeviceCtx->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_LINELIST);
-	// DirectDeviceCtx->Draw(TrianglesLinesStartIndex - NormalsStartIndex, NormalsStartIndex);
-	if (DrawTrianglesAsLines)
-		DirectDeviceCtx->Draw(NextVertexIndex - TrianglesLinesStartIndex, TrianglesLinesStartIndex);
+	DirectDeviceCtx->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	DirectDeviceCtx->DrawIndexed(NextIndexIndex, 0, 0);
 
 	// switch the back buffer and the front buffer
 	SwapChain->Present(0, 0);

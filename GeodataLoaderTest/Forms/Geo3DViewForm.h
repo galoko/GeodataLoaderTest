@@ -32,6 +32,7 @@ private:
 	static uint32_t AllocateVertexIndex(void);
 	static uint32_t AllocateIndexIndex(uint32_t Index);
 	static void ResetScene(void);
+	static void ApplyTootle(void);
 	static void CommitScene(void);
 
 	static void GenerateDebugStaticScene(void);
@@ -40,6 +41,7 @@ private:
 	static void FindCorrespondingLayer(int16_t LayersCount, int16_t* Layers, int16_t LayerIndex, int16_t OtherLayersCount, 
 		int16_t* OtherLayers, int16_t& CorrespondingLayerIndex, int16_t& CorrespondingHeight);
 	static void GetNeighbors(int GridX, int GridY, int16_t LayersCount, int16_t* Layers, int16_t LayerIndex, NeighborInfo Neighbors[3][3]);
+	static XMFLOAT3 BakeLightColor(XMVECTOR TextureColor, XMVECTOR Normal);
 	static void AddLine(InputVertex *P1, InputVertex *P2);
 	static void AddTriangleStrip(const int32_t Strip[], int Length);
 	static void AddPlane(int GridX, int GridY, int16_t Height, XMFLOAT3& Color);
@@ -64,7 +66,7 @@ private:
 	static void SetupPointUsageMap(int MapWidth, int MapHeight);
 	static void ResetPointUsageMap(int CenterGridX, int CenterGridY, bool CenterX, bool CenterY);
 	static void ApplyGridCellToPointUsageMap(int GridX, int GridY);
-	static void ApplyHeightRangeToPointUsageMap(int GridX, HeightRange *Range);
+	static bool ApplyHeightRangeToPointUsageMap(int GridX, HeightRange *Range);
 	static UsageInfo GetPointUsage(int GridX, int GridY);
 	static void SetPointUsageCount(int GridX, int GridY, uint8_t UsageCount);
 	static bool IsCellInUsageBound(int GridX, int GridY);
