@@ -122,6 +122,8 @@ static bool DrawTrianglesAsLines;
 static ID3D11RasterizerState *SolidMode;
 static ID3D11RasterizerState *WireFrameMode;
 
+static ID3D11Query *SyncQuery;
+
 #define KEYS_COUNT 256
 static bool PressedKeys[KEYS_COUNT];
 static bool InFocus;
@@ -438,6 +440,7 @@ void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowC
 
 	// GenerateDebugGeodataScene();
 	GenerateGeodataScene(13100, 140572, 16 * 700, 16 * 700);
+	// GenerateGeodataScene(79625, 143498, 16 * 500, 16 * 500);
 	// GenerateGeodataScene(13100 + 16 * 253, 140572 + 16 * 267, 16 * 2, 16 * 1);
 	// GenerateGeodataScene(13100 + 16 * 79, 140572 + 16 * 120, 16 * 2, 16 * 2);
 	// GenerateGeodataScene(13100 + 16 * 1500, 140572 + 16 * 1500, 16 * 2500, 16 * 2500);
@@ -462,7 +465,7 @@ bool TestNSWE(int NSWE, int Mask) {
 	return ((NSWE & Mask) == Mask);
 }
 
-int dumpBMP32(uint8_t* pixels, int width, int height, const char* filePath) {
+int DumpBMP32(uint8_t* pixels, int width, int height, const char* filePath) {
 
 	FILE *bmpFile = NULL;
 	int fileSize = 54 + 4 * width * height;
@@ -496,53 +499,67 @@ int dumpBMP32(uint8_t* pixels, int width, int height, const char* filePath) {
 	return 1;
 }
 
+#define NSWE_TEX_WIDTH 16
+#define NSWE_TEX_HEIGHT 16 * NSWE_TEX_WIDTH
+
 void Geo3DViewForm::GenerateNSWETexture(void)
 {
 	HRESULT res;
 
-	uint32_t Pixels[4 * 16][4];
+	uint32_t Pixels[NSWE_TEX_HEIGHT][NSWE_TEX_WIDTH];
 	memset(&Pixels[0][0], 0xFF, sizeof(Pixels));
+
+	for (int X = 0; X < NSWE_TEX_WIDTH; X++)
+		for (int Y = 0; Y < NSWE_TEX_HEIGHT; Y++) {
+
+			int CellX = X % NSWE_TEX_WIDTH;
+			int CellY = Y % NSWE_TEX_WIDTH;
+
+			if (CellX == 0 || CellX == NSWE_TEX_WIDTH - 1 || CellY == 0 || CellY == NSWE_TEX_WIDTH - 1)
+				Pixels[Y][X] = 0xFF00FF00;
+		}
+
 
 	for (int NSWE = 0; NSWE <= 15; NSWE++) {
 
-		int Y = (15 - NSWE) * 4;
+		int Y = (15 - NSWE) * NSWE_TEX_WIDTH;
 
 		if (!TestNSWE(NSWE, L2Geodata::EAST)) {
 
-			int X = 4 - 1;
+			int X = NSWE_TEX_WIDTH - 1;
 
-			for (int OffsetY = 0; OffsetY < 4; OffsetY++)
-				Pixels[Y + OffsetY][X + 0] = 0xFF000000;
+			for (int OffsetY = 1; OffsetY < NSWE_TEX_WIDTH - 1; OffsetY++)
+				Pixels[Y + OffsetY][X + 0] = 0xFFFF0000;
 		}
 
 		if (!TestNSWE(NSWE, L2Geodata::WEST)) {
 
 			int X = 0;
 
-			for (int OffsetY = 0; OffsetY < 4; OffsetY++)
-				Pixels[Y + OffsetY][X + 0] = 0xFF000000;
+			for (int OffsetY = 1; OffsetY < NSWE_TEX_WIDTH - 1; OffsetY++)
+				Pixels[Y + OffsetY][X + 0] = 0xFFFF0000;
 		}
 
 		if (!TestNSWE(NSWE, L2Geodata::NORTH)) {
 
-			for (int XOffset = 0; XOffset < 4; XOffset++)
-				Pixels[Y + 0][0 + XOffset] = 0xFF000000;
+			for (int XOffset = 1; XOffset < NSWE_TEX_WIDTH - 1; XOffset++)
+				Pixels[Y + 0][0 + XOffset] = 0xFFFF0000;
 		}
 
 		if (!TestNSWE(NSWE, L2Geodata::SOUTH)) {
 
-			for (int OffsetX = 0; OffsetX < 4; OffsetX++)
-				Pixels[Y + 4 - 1][0 + OffsetX] = 0xFF000000;
+			for (int OffsetX = 1; OffsetX < NSWE_TEX_WIDTH - 1; OffsetX++)
+				Pixels[Y + NSWE_TEX_WIDTH - 1][0 + OffsetX] = 0xFFFF0000;
 		}
 	}
 
-	D3D11_SUBRESOURCE_DATA InitialData = { };
+	D3D11_SUBRESOURCE_DATA InitialData = {};
 	InitialData.pSysMem = &Pixels[0][0];
 	InitialData.SysMemPitch = sizeof(Pixels[0]);
 
-	D3D11_TEXTURE2D_DESC TextureDesc = { };
-	TextureDesc.Width = 4;
-	TextureDesc.Height = 4 * 16;
+	D3D11_TEXTURE2D_DESC TextureDesc = {};
+	TextureDesc.Width = NSWE_TEX_WIDTH;
+	TextureDesc.Height = NSWE_TEX_HEIGHT;
 	TextureDesc.MipLevels = 1;
 	TextureDesc.ArraySize = 1;
 	TextureDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
@@ -562,7 +579,7 @@ void Geo3DViewForm::GenerateNSWETexture(void)
 
 	DirectDeviceCtx->PSSetShaderResources(0, 1, &NSWEView);
 
-	// dumpBMP32((uint8_t*)&Pixels[0][0], 4, 4 * 16, "H:\\test.bmp");
+	DumpBMP32((uint8_t*)&Pixels[0][0], NSWE_TEX_WIDTH, NSWE_TEX_HEIGHT, "H:\\test.bmp");
 }
 
 void Geo3DViewForm::GenerateDebugGeodataScene(void)
@@ -1295,7 +1312,7 @@ void Geo3DViewForm::AddTopPlaneModel(int16_t SubBlock, int Direction)
 			AllocateIndexIndex(VertexOffset + Indices[Index]);
 	}
 	else {
-		for (int Index = Indices.size() - 1; Index >= 0; Index--)
+		for (int Index = (int) Indices.size() - 1; Index >= 0; Index--)
 			AllocateIndexIndex(VertexOffset + Indices[Index]);
 	}
 }
@@ -1435,7 +1452,7 @@ bool Geo3DViewForm::GetWallDestHeight(int16_t SubBlock, int OffsetX, int OffsetY
 		return false;
 
 	int NSWE = GET_GEO_NSWE(SubBlock);
-	int MinHeightDiffToBeAbleGoUnder = 3 * L2Geodata::HEIGHT_RESOLUTION;
+	int MinHeightDiffToBeAbleGoUnder = 8 * L2Geodata::HEIGHT_RESOLUTION;
 	int16_t LowestHeight = GET_GEO_HEIGHT(Layers[LayersCount - 1]);
 
 	bool CantGoInThisDirection = !TestNSWE(NSWE, OffsetToNSWE(OffsetX, OffsetY));
@@ -1578,7 +1595,7 @@ void Geo3DViewForm::GenerateSidePlanes(int GridX, int GridY, int OffsetX, int Of
 #else
 			Vertex->Color = Color;
 #endif
-			Vertex->Tex = { 0, 0, 0 };
+			Vertex->Tex = { 0, 0, -1 };
 		}
 
 		if (PlaneDirection == (DynamicX ? 1 : -1)) {
@@ -1830,6 +1847,32 @@ void Geo3DViewForm::ProcessKeyboardInput(double dt)
 	BuildShaderMatrix();
 }
 
+void Geo3DViewForm::WaitForNextFrame(void)
+{
+	HRESULT res;
+
+	if (SyncQuery == NULL) {
+		D3D11_QUERY_DESC QueryDesc = {};
+		QueryDesc.Query = D3D11_QUERY_EVENT;
+
+		res = DirectDevice->CreateQuery(&QueryDesc, &SyncQuery);
+		if (FAILED(res))
+			throw new runtime_error("Couldn't create sync query");
+	}
+	else {
+
+		BOOL QueryResult;
+		do {
+			res = DirectDeviceCtx->GetData(SyncQuery, &QueryResult, sizeof(QueryResult), 0);
+			if (res == S_FALSE)
+				QueryResult = false;
+			else
+				if (res != S_OK)
+					throw new runtime_error("Sync query wait failed");
+		} while (!QueryResult);
+	}
+}
+
 void Geo3DViewForm::DrawScene(void)
 {
 	// clear the back buffer to a deep blue
@@ -1839,6 +1882,9 @@ void Geo3DViewForm::DrawScene(void)
 
 	DirectDeviceCtx->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 	DirectDeviceCtx->DrawIndexed(NextIndexIndex, 0, 0);
+
+	if (SyncQuery != NULL) 
+		DirectDeviceCtx->End(SyncQuery);
 
 	// switch the back buffer and the front buffer
 	SwapChain->Present(1, 0);

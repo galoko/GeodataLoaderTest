@@ -97,5 +97,6 @@ private:
 public:
 	static void Init(unsigned int Width, unsigned int Height, WCHAR *WindowClass, WCHAR *Title, HINSTANCE hInstance);
 	static void Show(void);
+	static void WaitForNextFrame(void);
 	static void Tick(double dt);
 };

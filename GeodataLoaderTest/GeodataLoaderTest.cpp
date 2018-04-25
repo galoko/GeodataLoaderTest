@@ -16,11 +16,6 @@ void OpenConsole(void) {
 	freopen_s(&fp, "CONOUT$", "w", stdout);
 }
 
-void Tick(double dt) {
-
-	Geo3DViewForm::Tick(dt);
-}
-
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, 
 	_In_ LPWSTR lpCmdLine,  _In_ int nCmdShow)
 {
@@ -40,7 +35,26 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance
 	Geo3DViewForm::Init(1280, 960, L"Geo3DView", L"Geodata 3D View", hInstance);
 	Geo3DViewForm::Show();
 
-	Run(0.0, Tick);
+	LONGLONG LastTick = GetTime();
+
+	// Main message loop:
+	while (TRUE)
+	{
+		// wait for frame
+		Geo3DViewForm::WaitForNextFrame();
+
+		// process input
+		if (!ProcessMessages())
+			break;
+
+		// time calculation
+		LONGLONG Now = GetTime();
+		double dt = TimeToSeconds(Now - LastTick);
+		LastTick = Now;
+
+		// actual draw call
+		Geo3DViewForm::Tick(dt);
+	}
 
 	return 0;
 }

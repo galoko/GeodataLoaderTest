@@ -41,6 +41,9 @@ PS_INPUT VS( VS_INPUT input )
 //--------------------------------------------------------------------------------------
 float4 PS( PS_INPUT input) : SV_Target
 {    
+    if (input.Tex.z < 0.0)
+        return input.Color;
+
     float2 Tex;
     Tex.x = input.Tex.x;
     Tex.y = input.Tex.z + (input.Tex.y % 1.0f) / 16.0f;
