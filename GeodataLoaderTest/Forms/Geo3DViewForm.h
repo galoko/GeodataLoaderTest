@@ -25,6 +25,8 @@ using Point = array<int32_t, 2>;
 
 class Geo3DViewForm {
 private:
+	static const int MAX_HEIGHT_RANGES_COUNT = L2Geodata::LAYERS_PER_SUBBLOCK_LIMIT; 
+
 	static void BuildViewMatrix(void);
 	static void BuildWorldMatrix(void);
 	static void BuildShaderMatrix(void);
@@ -35,20 +37,13 @@ private:
 	static void ApplyTootle(void);
 	static void CommitScene(void);
 
-	static void GenerateDebugStaticScene(void);
+	static void GenerateNSWETexture(void);
 
 	static void GetGeoLayers(int32_t GridX, int32_t GridY, int16_t& LayersCount, int16_t*& Layers);
 	static void FindCorrespondingLayer(int16_t LayersCount, int16_t* Layers, int16_t LayerIndex, int16_t OtherLayersCount, 
 		int16_t* OtherLayers, int16_t& CorrespondingLayerIndex, int16_t& CorrespondingHeight);
 	static void GetNeighbors(int GridX, int GridY, int16_t LayersCount, int16_t* Layers, int16_t LayerIndex, NeighborInfo Neighbors[3][3]);
 	static XMFLOAT3 BakeLightColor(XMVECTOR TextureColor, XMVECTOR Normal);
-	static void AddLine(InputVertex *P1, InputVertex *P2);
-	static void AddTriangleStrip(const int32_t Strip[], int Length);
-	static void AddPlane(int GridX, int GridY, int16_t Height, XMFLOAT3& Color);
-	static void AddSidePlane(int GridX, int GridY, int16_t Height, int16_t DestHeight, int OffsetX, int OffsetY, int PlaneDirection, XMFLOAT3& Color);
-
-	static void VisualizeNormals(void);
-	static void VisualizeTriangles(void);
 
 	static bool GenerateConcaveHull(vector<Point>& Dest, int StartX, int StartY, int TurnDirection);
 	static bool GenerateConcaveHullAndHolesFromUsageMap(void);
@@ -77,6 +72,9 @@ private:
 	static void GenerateTopPlanes(int GridX, int GridY);
 
 	static int16_t GetMeanHeight(HeightRange *HeightRanges, int HeightRangesCount);
+
+	static bool GetLowestHigherLayerHeight(int16_t Height, int16_t* Layers, int16_t LayersCount, int16_t& DestHeight);
+	static bool GetWallDestHeight(int16_t SubBlock, int OffsetX, int OffsetY, int16_t* Layers, int16_t LayersCount, int16_t& DestHeight);
 	static void GetHeightRanges(int GridX, int GridY, int OffsetX, int OffsetY, HeightRange *DestHeightRanges, int& DestHeightRangesCount);
 	static void GenerateSidePlanes(int GridX, int GridY, int OffsetX, int OffsetY);
 
@@ -89,6 +87,7 @@ private:
 	static void GenerateGeodataScene(int32_t WorldX, int32_t WorldY, uint32_t Width, uint32_t Height);
 	static void GenerateDebugGeodataScene(void);
 
+	static void ProcessWindowState(void);
 	static void ProcessMouseInput(LONG dx, LONG dy);
 	static void ProcessKeyboardInput(double dt);
 	static void DrawScene(void);

@@ -11,8 +11,8 @@ enum GeoType {
 };
 
 #define GET_GEO_HEIGHT(subblock) ((int16_t)(subblock & 0xFFF0) >> 1)
-#define GET_GEO_NWSE(subblock) ((int16_t)(subblock & 0x0F))
-#define MAKE_SUBBLOCK(height, nwse) ((int16_t)((int16_t)(height & 0xFFF0) << 1 | (int16_t)(nwse & 0x0F)))
+#define GET_GEO_NSWE(subblock) ((int16_t)(subblock & 0x0F))
+#define MAKE_SUBBLOCK(height, NSWE) ((int16_t)((int16_t)(height & 0xFFF0) << 1 | (int16_t)(NSWE & 0x0F)))
 
 class L2Geodata {
 public:
