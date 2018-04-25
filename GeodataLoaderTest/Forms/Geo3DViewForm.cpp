@@ -106,11 +106,11 @@ static vector<vector<Point>> SeparatedPoints;
 static vector<Point> Points;
 static vector<uint32_t> Indices;
 
-#define MAX_VERTICES (30 * 1000 * 1000)
+#define MAX_VERTICES (700 * 1000)
 static InputVertex *VertexBuffer;
 static uint32_t NextVertexIndex;
 
-#define MAX_INDEXES (MAX_VERTICES * 5)
+#define MAX_INDEXES (MAX_VERTICES * 2)
 static uint32_t *IndexBuffer;
 static uint32_t NextIndexIndex;
 static uint32_t LinesStartIndex;
@@ -438,9 +438,10 @@ void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowC
 
 	srand(57);
 
+	// GenerateDebugStaticScene();
 	// GenerateDebugGeodataScene();
-	GenerateGeodataScene(13100, 140572, 16 * 700, 16 * 700);
-	// GenerateGeodataScene(79625, 143498, 16 * 500, 16 * 500);
+	// GenerateGeodataScene(13100, 140572, 16 * 1, 16 * 1);
+	GenerateGeodataScene(79625, 143498, 16 * 500, 16 * 500);
 	// GenerateGeodataScene(13100 + 16 * 253, 140572 + 16 * 267, 16 * 2, 16 * 1);
 	// GenerateGeodataScene(13100 + 16 * 79, 140572 + 16 * 120, 16 * 2, 16 * 2);
 	// GenerateGeodataScene(13100 + 16 * 1500, 140572 + 16 * 1500, 16 * 2500, 16 * 2500);
@@ -458,6 +459,30 @@ void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowC
 
 	if (!RegisterRawInputDevices(Rid, 1, sizeof(Rid[0])))
 		throw new std::runtime_error("Couldn't register raw devices");
+}
+
+void Geo3DViewForm::GenerateDebugStaticScene(void) {
+
+	uint32_t Vertices[4];
+	Vertices[0] = AllocateVertexIndex();
+	Vertices[1] = AllocateVertexIndex();
+	Vertices[2] = AllocateVertexIndex();
+	Vertices[3] = AllocateVertexIndex();
+
+	VertexBuffer[Vertices[0]] = InputVertex(0.0f, 0.0f, -1.0f, 0, 0, 0);
+	VertexBuffer[Vertices[1]] = InputVertex(1.0f, 0.0f, -1.0f, 0, 1, 0);
+	VertexBuffer[Vertices[2]] = InputVertex(0.0f, 1.0f, -1.0f, 1, 0, 0);
+	VertexBuffer[Vertices[3]] = InputVertex(1.0f, 1.0f, -1.0f, 1, 1, 1);
+
+	AllocateIndexIndex(Vertices[0]);
+	AllocateIndexIndex(Vertices[1]);
+	AllocateIndexIndex(Vertices[2]);
+
+	AllocateIndexIndex(Vertices[1]);
+	AllocateIndexIndex(Vertices[2]);
+	AllocateIndexIndex(Vertices[3]);
+
+	CommitScene();
 }
 
 bool TestNSWE(int NSWE, int Mask) {
@@ -579,7 +604,7 @@ void Geo3DViewForm::GenerateNSWETexture(void)
 
 	DirectDeviceCtx->PSSetShaderResources(0, 1, &NSWEView);
 
-	DumpBMP32((uint8_t*)&Pixels[0][0], NSWE_TEX_WIDTH, NSWE_TEX_HEIGHT, "H:\\test.bmp");
+	// DumpBMP32((uint8_t*)&Pixels[0][0], NSWE_TEX_WIDTH, NSWE_TEX_HEIGHT, "H:\\test.bmp");
 }
 
 void Geo3DViewForm::GenerateDebugGeodataScene(void)
@@ -1875,6 +1900,8 @@ void Geo3DViewForm::WaitForNextFrame(void)
 
 void Geo3DViewForm::DrawScene(void)
 {
+	
+
 	// clear the back buffer to a deep blue
 	float color[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
 	DirectDeviceCtx->ClearRenderTargetView(RenderTargetView, color);

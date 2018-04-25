@@ -88,6 +88,8 @@ private:
 	static void GenerateGeodataScene(int32_t WorldX, int32_t WorldY, uint32_t Width, uint32_t Height);
 	static void GenerateDebugGeodataScene(void);
 
+	static void GenerateDebugStaticScene(void);
+
 	static void ProcessWindowState(void);
 	static void ProcessMouseInput(LONG dx, LONG dy);
 	static void ProcessKeyboardInput(double dt);
