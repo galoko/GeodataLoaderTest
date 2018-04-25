@@ -25,7 +25,7 @@ using Point = array<int32_t, 2>;
 
 class Geo3DViewForm {
 private:
-	static const int MAX_HEIGHT_RANGES_COUNT = L2Geodata::LAYERS_PER_SUBBLOCK_LIMIT; 
+	static const int MAX_HEIGHT_RANGES_COUNT = L2Geodata::LAYERS_PER_SUBBLOCK_LIMIT * 2; 
 
 	static void BuildViewMatrix(void);
 	static void BuildWorldMatrix(void);
@@ -69,6 +69,7 @@ private:
 	static bool FindPointByUsageCount(uint8_t UsageCount, POINT& Point);
 	static void FinalizePointUsageMap(void);
 
+	static void AddTopPlaneModel(int16_t SubBloc, int Direction);
 	static void GenerateTopPlanes(int GridX, int GridY);
 
 	static int16_t GetMeanHeight(HeightRange *HeightRanges, int HeightRangesCount);

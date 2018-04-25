@@ -330,8 +330,8 @@ void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowC
 
 	// setup cull mode
 
-	D3D11_RASTERIZER_DESC CullModeDesc = {};
-	CullModeDesc.CullMode = D3D11_CULL_NONE;
+	D3D11_RASTERIZER_DESC CullModeDesc = { };
+	CullModeDesc.CullMode = D3D11_CULL_FRONT;
 	CullModeDesc.FrontCounterClockwise = true;
 
 	CullModeDesc.FillMode = D3D11_FILL_SOLID;
@@ -437,8 +437,8 @@ void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowC
 	srand(57);
 
 	// GenerateDebugGeodataScene();
-	// GenerateGeodataScene(13100, 140572, 16 * 700, 16 * 700);
-	GenerateGeodataScene(13100 + 16 * 253, 140572 + 16 * 267, 16 * 2, 16 * 1);
+	GenerateGeodataScene(13100, 140572, 16 * 700, 16 * 700);
+	// GenerateGeodataScene(13100 + 16 * 253, 140572 + 16 * 267, 16 * 2, 16 * 1);
 	// GenerateGeodataScene(13100 + 16 * 79, 140572 + 16 * 120, 16 * 2, 16 * 2);
 	// GenerateGeodataScene(13100 + 16 * 1500, 140572 + 16 * 1500, 16 * 2500, 16 * 2500);
 	// GenerateGeodataScene(13100 + 16 * 137, 140572 + 16 * 73, 16 * 20, 16 * 10);
@@ -1263,6 +1263,43 @@ void Geo3DViewForm::FinalizePointUsageMap(void)
 	PointUsageMapGridY = 0;
 }
 
+static float Epsilon = 10e-5f;
+
+void Geo3DViewForm::AddTopPlaneModel(int16_t SubBlock, int Direction)
+{
+	XMFLOAT3 Color = BakeLightColor({ 1, 1, 1 }, { 0, 0, (float)Direction });
+
+	int NSWE = GET_GEO_NSWE(SubBlock);
+	float TexOffsetY = (float)(15 - NSWE) / 16.0f;
+
+	uint32_t VertexOffset = NextVertexIndex;
+	for (int Index = 0; Index < Points.size(); Index++) {
+
+		Point P = Points[Index];
+
+		uint32_t VertexIndex = AllocateVertexIndex();
+
+		InputVertex *Vertex = &VertexBuffer[VertexIndex];
+
+		Vertex->Pos = { (float)P[0], (float)P[1], (float)GET_GEO_HEIGHT(SubBlock) * 0.1f + (float)Direction * Epsilon };
+#ifdef DEBUG_USE_RANDOM_COLORS
+		Vertex->Color = GetRandomColor();
+#else
+		Vertex->Color = Color;
+#endif
+		Vertex->Tex = { (float)P[0], (float)P[1], TexOffsetY };
+	}
+
+	if (Direction == 1) {
+		for (int Index = 0; Index < Indices.size(); Index++)
+			AllocateIndexIndex(VertexOffset + Indices[Index]);
+	}
+	else {
+		for (int Index = Indices.size() - 1; Index >= 0; Index--)
+			AllocateIndexIndex(VertexOffset + Indices[Index]);
+	}
+}
+
 void Geo3DViewForm::GenerateTopPlanes(int GridX, int GridY)
 {
 	int16_t LayersCount;
@@ -1323,34 +1360,11 @@ void Geo3DViewForm::GenerateTopPlanes(int GridX, int GridY)
 				break;		
 		}
 
-		XMFLOAT3 Color = BakeLightColor({ 1, 1, 1 }, { 0, 0, 1 });
-
 		if (!GenerateModelFromUsageMap())
 			throw new runtime_error("Couldn't generate model for top plane");
 
-		int NSWE = GET_GEO_NSWE(SubBlock);
-		float TexOffsetY = (float)(15 - NSWE) / 16.0f;
-
-		uint32_t VertexOffset = NextVertexIndex;
-		for (int Index = 0; Index < Points.size(); Index++) {
-
-			Point P = Points[Index];
-
-			uint32_t VertexIndex = AllocateVertexIndex();
-
-			InputVertex *Vertex = &VertexBuffer[VertexIndex];
-
-			Vertex->Pos = { (float)P[0], (float)P[1], (float)GET_GEO_HEIGHT(SubBlock) * 0.1f };
-#ifdef DEBUG_USE_RANDOM_COLORS
-			Vertex->Color = GetRandomColor();
-#else
-			Vertex->Color = Color;
-#endif
-			Vertex->Tex = { (float)P[0], (float)P[1], TexOffsetY };
-		}
-
-		for (int Index = 0; Index < Indices.size(); Index++)
-			AllocateIndexIndex(VertexOffset + Indices[Index]);
+		AddTopPlaneModel(SubBlock,  1);
+		AddTopPlaneModel(SubBlock, -1);
 	}
 }
 
@@ -1454,6 +1468,7 @@ void Geo3DViewForm::GetHeightRanges(int GridX, int GridY, int OffsetX, int Offse
 			continue;
 
 		HeightRanges[HeightRangesIndex++] = HeightRange(GET_GEO_HEIGHT(Layers[LayerIndex]), DestHeight);
+		HeightRanges[HeightRangesIndex++] = HeightRange(DestHeight, GET_GEO_HEIGHT(Layers[LayerIndex]));
 	}
 
 	for (int DestLayerIndex = 0; DestLayerIndex < DestLayersCount; DestLayerIndex++) {
@@ -1464,66 +1479,10 @@ void Geo3DViewForm::GetHeightRanges(int GridX, int GridY, int OffsetX, int Offse
 			continue;
 
 		HeightRanges[HeightRangesIndex++] = HeightRange(DestHeight, GET_GEO_HEIGHT(DestLayers[DestLayerIndex]));
+		HeightRanges[HeightRangesIndex++] = HeightRange(GET_GEO_HEIGHT(DestLayers[DestLayerIndex]), DestHeight);
 	}
 
-	/*
-	for (int Index1 = 0; Index1 < LayersCount; Index1++)
-		for (int Index2 = 0; Index2 < DestLayersCount; Index2++) {
-
-			int16_t Height1 = GET_GEO_HEIGHT(Layers[Index1]);
-			int16_t Height2 = GET_GEO_HEIGHT(DestLayers[Index2]);
-
-			int NSWE1 = GET_GEO_NSWE(Layers[Index1]);
-			int NSWE2 = GET_GEO_NSWE(DestLayers[Index2]);
-
-			bool ShouldPlaceWall = Height1 != Height2;
-			bool NSWEFailed = false;
-			int MinDist = 16 * 3;
-
-			ShouldPlaceWall = false;
-
-			if (Index1 < LayersCount - 1) {
-				int16_t UnderneathHeight = GET_GEO_HEIGHT(Layers[Index1 + 1]);
-
-				int DistBetweenTwoLayers = Height1 - UnderneathHeight;
-				int DistBetweenLayers = Height1 - Height2;
-
-				if (DistBetweenTwoLayers > MinDist && DistBetweenLayers > MinDist)
-					ShouldPlaceWall = false;
-
-				if (!TestNSWE(NSWE2, OffsetToNSWE(-OffsetX, -OffsetY)))
-					NSWEFailed = true;
-			}
-
-			if (Index2 < DestLayersCount - 1) {
-				int16_t UnderneathHeight = GET_GEO_HEIGHT(DestLayers[Index2 + 1]);
-
-				int DistBetweenTwoLayers = Height2 - UnderneathHeight;
-				int DistBetweenLayers = Height2 - Height1;
-
-				if (DistBetweenTwoLayers > MinDist && DistBetweenLayers > MinDist)
-					ShouldPlaceWall = false;
-
-				if (!TestNSWE(NSWE1, OffsetToNSWE(OffsetX, OffsetY)))
-					NSWEFailed = true;
-			}
-
-			if (NSWEFailed)
-				ShouldPlaceWall = true;
-
-			if (Height1 == Height2)
-				ShouldPlaceWall = false;
-
-			if (ShouldPlaceWall)
-				HeightRanges[HeightRangesIndex++] = HeightRange(Height1, Height2);
-		}
-	*/
-
 	if (HeightRangesIndex > 0) {
-
-		if (HeightRangesIndex > 1)
-			HeightRangesIndex = HeightRangesIndex;
-
 		sort(begin(HeightRanges), begin(HeightRanges) + HeightRangesIndex);
 
 		HeightRange* CurrentRange = &DestHeightRanges[DestHeightRangesCount++];
@@ -1539,17 +1498,6 @@ void Geo3DViewForm::GetHeightRanges(int GridX, int GridY, int OffsetX, int Offse
 				*CurrentRange = *NextRange;
 			}
 		}
-
-		/*
-		for (int Index = 1; Index < DestHeightRangesCount; Index++) {
-
-			HeightRange* PrevRange = &DestHeightRanges[Index - 1];
-			HeightRange* CurrentRange = &DestHeightRanges[Index];
-
-			if (PrevRange->DirectionInvariantOverlapTestWith(CurrentRange))
-				cout << "shitty z buffer on the way" << endl;
-		}
-		*/
 	}
 }
 
@@ -1623,7 +1571,8 @@ void Geo3DViewForm::GenerateSidePlanes(int GridX, int GridY, int OffsetX, int Of
 
 			InputVertex *Vertex = &VertexBuffer[VertexIndex];
 
-			Vertex->Pos = { (float)(DynamicX ? P[0] : GridX + 1), (float)(!DynamicX ? P[0] : GridY + 1), (float)GridZToHeight(P[1]) * 0.1f };
+			// this epsilon thing is for fixing z buffer fight
+			Vertex->Pos = { (float)(DynamicX ? P[0] : (float)(GridX + 1) + (float)PlaneDirection * Epsilon), (float)(!DynamicX ? P[0] : (float)(GridY + 1) + (float)PlaneDirection * Epsilon), (float)GridZToHeight(P[1]) * 0.1f };
 #ifdef DEBUG_USE_RANDOM_COLORS
 			Vertex->Color = GetRandomColor();
 #else
