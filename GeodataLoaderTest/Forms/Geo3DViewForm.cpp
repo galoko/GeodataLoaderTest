@@ -562,7 +562,7 @@ void Geo3DViewForm::GenerateNSWETexture(void)
 
 	DirectDeviceCtx->PSSetShaderResources(0, 1, &NSWEView);
 
-	dumpBMP32((uint8_t*)&Pixels[0][0], 4, 4 * 16, "H:\\test.bmp");
+	// dumpBMP32((uint8_t*)&Pixels[0][0], 4, 4 * 16, "H:\\test.bmp");
 }
 
 void Geo3DViewForm::GenerateDebugGeodataScene(void)
