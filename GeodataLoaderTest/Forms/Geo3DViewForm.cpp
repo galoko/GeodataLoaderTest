@@ -18,16 +18,18 @@
 #include <algorithm>
 
 #pragma comment (lib, "d3d11.lib")
-#pragma comment(lib,"d3dcompiler.lib")
+#pragma comment(lib, "d3dcompiler.lib")
 
 #undef DEBUG_USE_RANDOM_COLORS
 #undef NO_LIGHTING
 #undef VERBOSE_LOG
 
-/*
-#undef NDEBUG
-#include <assert.h>   // reinclude the header to update the definition of assert()
-*/
+// Window
+
+static unsigned int Width, Height;
+static HWND WindowHandle;
+
+// DirectX 11 
 
 #pragma pack(push,1)
 struct InputVertex
@@ -43,10 +45,6 @@ struct InputVertex
 	}
 };
 #pragma pack(pop)
-
-static unsigned int Width, Height;
-
-static HWND WindowHandle;
 
 static ID3D11Device *DirectDevice;
 static ID3D11DeviceContext *DirectDeviceCtx;
@@ -65,6 +63,7 @@ static XMMATRIX WorldMatrix;
 static XMMATRIX ViewMatrix;
 static XMMATRIX ProjectionMatrix;
 static ID3D11Buffer *ShaderMatrixRef;
+
 static ID3D11Texture2D *NSWETexture;
 static ID3D11ShaderResourceView *NSWEView;
 
@@ -73,39 +72,13 @@ static ID3D11Buffer *SceneIndexBuffer;
 
 static ID3D11SamplerState *Sampler;
 
-static XMFLOAT3 CameraPosition;
-static XMFLOAT2 CameraAngle;
-static XMVECTOR TargetVector;
-static XMVECTOR Up;
+static ID3D11RasterizerState *SolidMode;
+static ID3D11RasterizerState *WireFrameMode;
 
-static uint32_t GridWorldX;
-static uint32_t GridWorldY;
-static uint32_t GridWidth;
-static uint32_t GridHeight;
-static uint8_t *GridUsageMap;
+// for input lag reduction
+static ID3D11Query *SyncQuery;
 
-#pragma pack(push,1)
-struct UsageInfo {
-	bool IsSet : 1;
-	uint8_t UsageCount : 3;
-};
-#pragma pack(pop)
-
-static UsageInfo *PointUsageMap;
-static UsageInfo *PointUsageMapZeroMemoryTemplate;
-static uint32_t PointUsageMapWidth;
-static uint32_t PointUsageMapHeight;
-static int32_t PointUsageMapGridX;
-static int32_t PointUsageMapGridY;
-static RECT PointUsageMapUsedBoundBox;
-
-static POINT *FloodFillStack;
-static uint32_t FloodFillStackSize;
-static int32_t FloodFillStackIndex;
-
-static vector<vector<Point>> SeparatedPoints;
-static vector<Point> Points;
-static vector<uint32_t> Indices;
+// DirectX Scene definition
 
 #define MAX_VERTICES (700 * 1000 * 22)
 static InputVertex *VertexBuffer;
@@ -114,22 +87,65 @@ static uint32_t NextVertexIndex;
 #define MAX_INDEXES (MAX_VERTICES * 2)
 static uint32_t *IndexBuffer;
 static uint32_t NextIndexIndex;
-static uint32_t LinesStartIndex;
-static uint32_t NormalsStartIndex;
-static uint32_t TrianglesLinesStartIndex;
+
+// GUI
+
+static XMFLOAT3 CameraPosition;
+static XMFLOAT2 CameraAngle;
+static XMVECTOR TargetVector;
+static XMVECTOR Up;
 
 static bool DrawTrianglesAsLines;
-
-static ID3D11RasterizerState *SolidMode;
-static ID3D11RasterizerState *WireFrameMode;
-
-static ID3D11Query *SyncQuery;
-static bool VSync = true;
+static bool UseVSync = true;
+static bool IsInFocus;
 
 #define KEYS_COUNT 256
 static bool PressedKeys[KEYS_COUNT];
-static bool InFocus;
+
 static float MoveSpeed = 30.0f;
+
+// 3D Model Generation
+
+// Generation Grid definition
+
+static uint32_t GridWorldX;
+static uint32_t GridWorldY;
+static uint32_t GridWidth;
+static uint32_t GridHeight;
+
+// Grid that hold every cell and layer usage inside the grid
+static uint8_t *GridUsageMap;
+
+// Flood Fill's stack
+
+static POINT *FloodFillStack;
+static uint32_t FloodFillStackSize;
+static int32_t FloodFillStackIndex;
+
+// Point usage counter table, gets filled by Flood Fill algorithm
+
+#pragma pack(push,1)
+struct UsageInfo {
+	bool IsSet : 1;
+	uint8_t UsageCount : 3;
+};
+#pragma pack(pop)
+
+static uint32_t PointUsageMapWidth;
+static uint32_t PointUsageMapHeight;
+static int32_t PointUsageMapGridX;
+static int32_t PointUsageMapGridY;
+static UsageInfo *PointUsageMap;
+static RECT PointUsageMapUsedBoundBox;
+
+// Points generated based on Point Usage map, used by EarCut algorithm
+
+// EarCut input
+static vector<vector<Point>> SeparatedPoints;
+// EarCut output index for this list
+static vector<Point> Points;
+// EarCut also output Indices
+static vector<uint32_t> Indices;
 
 static XMVECTOR LightDirection;
 
@@ -513,7 +529,7 @@ bool Geo3DViewForm::HandleKeyPress(int Key)
 		PrintCurrentCoord();
 		break;
 	case 'V':
-		VSync = !VSync;
+		UseVSync = !UseVSync;
 		break;
 	default:
 		return false;
@@ -737,9 +753,6 @@ void Geo3DViewForm::ResetScene(void)
 {
 	NextVertexIndex = 0;
 	NextIndexIndex = 0;
-	LinesStartIndex = 0;
-	NormalsStartIndex = 0;
-	TrianglesLinesStartIndex = 0;
 }
 
 #ifdef USE_TOOTLE
@@ -1191,7 +1204,6 @@ void Geo3DViewForm::SetupPointUsageMap(int MapWidth, int MapHeight)
 	PointUsageMapGridY = 0;
 
 	PointUsageMap = (UsageInfo*)calloc(PointUsageMapWidth * PointUsageMapHeight, sizeof(UsageInfo));
-	PointUsageMapZeroMemoryTemplate = (UsageInfo*)calloc(PointUsageMapWidth * PointUsageMapHeight, sizeof(UsageInfo));
 
 	PointUsageMapUsedBoundBox = { MAXLONG32, MAXLONG32, MINLONG32, MINLONG32 };
 }
@@ -1470,39 +1482,87 @@ int32_t GetHeightDiff(int16_t From, int16_t To) {
 	return (int32_t)To - (int32_t)From;
 }
 
-bool Geo3DViewForm::GetLowestHigherLayerHeight(int16_t Height, int16_t* Layers, int16_t LayersCount, int16_t& DestHeight)
-{
-	DestHeight = MININT16;
+void Geo3DViewForm::GetLowAndHighLayers(int16_t SubBlock, int16_t* Layers, int16_t LayersCount, int16_t& LowLayerIndex, int16_t& HighLayerIndex) {
+
+	LowLayerIndex = -1;
+	HighLayerIndex = -1;
+
+	int16_t Height = GET_GEO_HEIGHT(SubBlock);
 
 	for (int Index = 0; Index < LayersCount; Index++) {
 
 		int16_t CurrentHeight = GET_GEO_HEIGHT(Layers[Index]);
 
-		if (CurrentHeight <= Height)
-			break;
+		if (CurrentHeight <= Height) {
 
-		DestHeight = CurrentHeight;
+			LowLayerIndex = Index;
+			break;
+		}
+
+		HighLayerIndex = Index;
+	}
+}
+
+bool Geo3DViewForm::CanGoInThisDirection(int16_t SubBlock, int DirectionX, int DirectionY)
+{
+	int NSWE = GET_GEO_NSWE(SubBlock);
+
+	return TestNSWE(NSWE, OffsetToNSWE(DirectionX, DirectionY));
+}
+
+bool Geo3DViewForm::CanGoUnderneath(int16_t SubBlock, int16_t HigherSubBlock)
+{
+	int16_t Height = GET_GEO_HEIGHT(SubBlock);
+	int16_t HigherHeight = GET_GEO_HEIGHT(HigherSubBlock);
+
+	return GetHeightDiff(Height, HigherHeight) > L2Geodata::MIN_LAYER_DIFF;
+}
+
+bool Geo3DViewForm::GetDestSubBlock(int16_t SubBlock, int OffsetX, int OffsetY, int16_t* Layers, int16_t LayersCount, int16_t& DestSubBlock)
+{
+	// just can't go in this direction
+	if (!CanGoInThisDirection(SubBlock, OffsetX, OffsetY))
+		return false;
+
+	int16_t LowLayerIndex, HighLayerIndex;
+	GetLowAndHighLayers(SubBlock, Layers, LayersCount, LowLayerIndex, HighLayerIndex);
+
+	if (HighLayerIndex != -1) {
+
+		int16_t HigherSubBlock = Layers[HighLayerIndex];
+		// if we cannot go underneath the higher subblock then we'll go right on it
+		if (!CanGoUnderneath(SubBlock, HigherSubBlock)) {
+
+			DestSubBlock = HigherSubBlock;
+			return true;
+		}
 	}
 
-	return DestHeight > Height;
+	// at this moment we already not struggling with higher subblock
+	if (LowLayerIndex != -1) {
+
+		DestSubBlock = Layers[LowLayerIndex];
+		return true;
+	}
+
+	// or else we cannot go on higher block and don't even have lower block so we kinda stuck
+	return false;
 }
 
 bool Geo3DViewForm::GetWallDestHeight(int16_t SubBlock, int OffsetX, int OffsetY, int16_t* Layers, int16_t LayersCount, int16_t& DestHeight)
 {
-	int16_t Height = GET_GEO_HEIGHT(SubBlock);
-
-	if (!GetLowestHigherLayerHeight(Height, Layers, LayersCount, DestHeight))
+	int16_t LowLayerIndex, HighLayerIndex;
+	GetLowAndHighLayers(SubBlock, Layers, LayersCount, LowLayerIndex, HighLayerIndex);
+	if (HighLayerIndex == -1)
 		return false;
 
-	int NSWE = GET_GEO_NSWE(SubBlock);
-	int MinHeightDiffToBeAbleGoUnder = 8 * L2Geodata::HEIGHT_RESOLUTION;
-	int16_t LowestHeight = GET_GEO_HEIGHT(Layers[LayersCount - 1]);
+	DestHeight = GET_GEO_HEIGHT(Layers[HighLayerIndex]);
 
-	bool CantGoInThisDirection = !TestNSWE(NSWE, OffsetToNSWE(OffsetX, OffsetY));
-	bool CantGoUnderHigherLayer = GetHeightDiff(Height, DestHeight) < MinHeightDiffToBeAbleGoUnder;
-	bool IsNothingUnderHigherLayer = DestHeight == LowestHeight;
+	bool CantGoInThisDirection = !CanGoInThisDirection(SubBlock, OffsetX, OffsetY);
+	bool CantGoUnderneathHigherLayer = !CanGoUnderneath(SubBlock, Layers[HighLayerIndex]);
+	bool IsNothingUnderHigherLayer = LowLayerIndex == -1;
 
-	bool WallRequired = CantGoInThisDirection || CantGoUnderHigherLayer || IsNothingUnderHigherLayer;
+	bool WallRequired = CantGoInThisDirection || CantGoUnderneathHigherLayer || IsNothingUnderHigherLayer;
 
 	return WallRequired;
 }
@@ -1736,11 +1796,6 @@ void Geo3DViewForm::GenerateGeodataScene(int32_t WorldX, int32_t WorldY, uint32_
 			GenerateSidePlanes(GridX, GridY, 0, 1);
 		}
 
-	LinesStartIndex = NextVertexIndex;
-
-	// VisualizeNormals();
-	// VisualizeTriangles();
-
 	CommitScene();
 
 	FinalizeGenerationGrid();
@@ -1756,11 +1811,11 @@ void Geo3DViewForm::ProcessWindowState(void)
 {
 	bool IsInFocusNow = GetForegroundWindow() == WindowHandle;
 
-	if (IsInFocusNow != InFocus) {
+	if (IsInFocusNow != IsInFocus) {
 
-		InFocus = IsInFocusNow;
+		IsInFocus = IsInFocusNow;
 
-		if (InFocus) {
+		if (IsInFocus) {
 			RECT Rect;
 			POINT Center;
 
@@ -1814,7 +1869,7 @@ LRESULT Geo3DViewForm::WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam
 		if ((RawInput.data.mouse.usFlags & 1) != MOUSE_MOVE_RELATIVE)
 			break;
 
-		if (InFocus)
+		if (IsInFocus)
 			ProcessMouseInput(RawInput.data.mouse.lLastX, RawInput.data.mouse.lLastY);
 
 		break;
@@ -1935,7 +1990,7 @@ void Geo3DViewForm::DrawScene(void)
 		DirectDeviceCtx->End(SyncQuery);
 
 	// switch the back buffer and the front buffer
-	SwapChain->Present(VSync ? 1 : 0, 0);
+	SwapChain->Present(UseVSync ? 1 : 0, 0);
 }
 
 void Geo3DViewForm::Tick(double dt) {

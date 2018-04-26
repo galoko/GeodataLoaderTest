@@ -72,7 +72,10 @@ private:
 	static void AddTopPlaneModel(int16_t SubBloc, int Direction);
 	static void GenerateTopPlanes(int GridX, int GridY);
 
-	static bool GetLowestHigherLayerHeight(int16_t Height, int16_t* Layers, int16_t LayersCount, int16_t& DestHeight);
+	static void GetLowAndHighLayers(int16_t SubBlock, int16_t* Layers, int16_t LayersCount, int16_t& LowLayerIndex, int16_t& HighLayerIndex);
+	static bool CanGoInThisDirection(int16_t SubBlock, int DirectionX, int DirectionY);
+	static bool CanGoUnderneath(int16_t SubBlock, int16_t HigherSubBlock);
+	static bool GetDestSubBlock(int16_t SubBlock, int OffsetX, int OffsetY, int16_t* Layers, int16_t LayersCount, int16_t& DestSubBlock);
 	static bool GetWallDestHeight(int16_t SubBlock, int OffsetX, int OffsetY, int16_t* Layers, int16_t LayersCount, int16_t& DestHeight);
 	static void GetHeightRanges(int GridX, int GridY, int OffsetX, int OffsetY, HeightRange *DestHeightRanges, int& DestHeightRangesCount);
 	static void GenerateSidePlanes(int GridX, int GridY, int OffsetX, int OffsetY);
