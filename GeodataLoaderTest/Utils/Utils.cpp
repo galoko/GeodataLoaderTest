@@ -1,9 +1,34 @@
 #include "stdafx.h"
+
+#include <Windows.h>
 #include <cmath>
+#include <iostream>
+
+// points
+
+POINT CrossProduct(POINT P, int S) {
+	return { -P.y * S, P.x * S };
+}
+
+POINT AddPoint(POINT P1, POINT P2) {
+	return { P1.x + P2.x, P1.y + P2.y };
+}
+
+POINT NegatePoint(POINT P) {
+	return { -P.x, -P.y };
+}
+
+bool Equals(POINT P1, POINT P2) {
+	return (P1.x == P2.x && P1.y == P2.y);
+}
+
+POINT ToZeroBasePoint(POINT P) {
+	return { (P.x + 1) / 2, (P.y + 1) / 2 };
+}
 
 // color
 
-COLORREF getSpectrumColor(double t)
+COLORREF GetSpectrumColor(double t)
 {
 	double w;
 
@@ -148,4 +173,38 @@ bool ProcessMessages(void) {
 	}
 
 	return true;
+}
+
+int DumpBMP32(uint8_t* pixels, int width, int height, const char* filePath) {
+
+	FILE *bmpFile = NULL;
+	int fileSize = 54 + 4 * width * height;
+
+	unsigned char bmpfileheader[14] = { 'B','M', 0,0,0,0, 0,0, 0,0, 54,0,0,0 };
+	unsigned char bmpinfoheader[40] = { 40,0,0,0, 0,0,0,0, 0,0,0,0, 1,0, 32,0 };
+	unsigned char bmppad[3] = { 0,0,0 };
+
+	bmpfileheader[2] = (unsigned char)(fileSize);
+	bmpfileheader[3] = (unsigned char)(fileSize >> 8);
+	bmpfileheader[4] = (unsigned char)(fileSize >> 16);
+	bmpfileheader[5] = (unsigned char)(fileSize >> 24);
+
+	bmpinfoheader[4] = (unsigned char)(width);
+	bmpinfoheader[5] = (unsigned char)(width >> 8);
+	bmpinfoheader[6] = (unsigned char)(width >> 16);
+	bmpinfoheader[7] = (unsigned char)(width >> 24);
+	bmpinfoheader[8] = (unsigned char)(height);
+	bmpinfoheader[9] = (unsigned char)(height >> 8);
+	bmpinfoheader[10] = (unsigned char)(height >> 16);
+	bmpinfoheader[11] = (unsigned char)(height >> 24);
+
+	fopen_s(&bmpFile, filePath, "wb");
+	fwrite(bmpfileheader, 1, sizeof(bmpfileheader), bmpFile);
+	fwrite(bmpinfoheader, 1, sizeof(bmpinfoheader), bmpFile);
+	for (int i = 0; i<height; i++)
+		fwrite(pixels + (width * (height - i - 1) * 4), 4, (size_t)width, bmpFile);
+
+	fclose(bmpFile);
+
+	return 1;
 }

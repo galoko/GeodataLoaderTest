@@ -12,9 +12,7 @@
 
 #include "TimeUtils.h"
 
-namespace fs = std::experimental::filesystem::v1;
-
-using namespace fs;
+using namespace experimental::filesystem::v1;
 using namespace string_literals;
 
 int16_t *L2Geodata::FullData;
@@ -149,7 +147,7 @@ int16_t* L2Geodata::GetSubBlocks(int32_t WorldX, int32_t WorldY, int16_t& Count)
 inline void L2Geodata::ValidateSubBlock(int16_t SubBlock) {
 
 	if (SubBlock == SPECIAL_SUBBLOCK_EMPTY || SubBlock == SPECIAL_SUBBLOCK_MULTILAYER)
-		throw new std::runtime_error("Input subblock have special value, you need to either change geodata subblock or change special values");
+		throw new runtime_error("Input subblock have special value, you need to either change geodata subblock or change special values");
 }
 
 inline void L2Geodata::SetGeoSubBlockInternal(uint32_t RegionX, uint32_t RegionY, uint32_t BlockX, uint32_t BlockY,
@@ -170,7 +168,7 @@ inline void L2Geodata::SetGeoLayersInternal(uint32_t RegionX, uint32_t RegionY, 
 	int16_t* FullGeoSubBlock = GetGeoSubBlockPtrInternal(RegionX, RegionY, BlockX, BlockY, SubBlockX, SubBlockY); 
 
 	if (*FullGeoSubBlock != SPECIAL_SUBBLOCK_EMPTY)
-		throw new std::runtime_error("Geo subblock is not empty");
+		throw new runtime_error("Geo subblock is not empty");
 
 	*FullGeoSubBlock = SPECIAL_SUBBLOCK_MULTILAYER;
 
@@ -186,7 +184,7 @@ inline void L2Geodata::SetGeoLayersInternal(uint32_t RegionX, uint32_t RegionY, 
 
 	int32_t SubBlockLayersIndex = MultilayerSubblockMap[BlockIndex][SubBlockX][SubBlockY];
 	if (SubBlockLayersIndex != -1)
-		throw new std::runtime_error("Block layers are already set");
+		throw new runtime_error("Block layers are already set");
 
 	SubBlockLayersIndex = AllocateLayersEntries(1 + LayersCount);
 	MultilayerSubblockMap[BlockIndex][SubBlockX][SubBlockY] = SubBlockLayersIndex;
@@ -200,7 +198,7 @@ inline void L2Geodata::SetGeoLayersInternal(uint32_t RegionX, uint32_t RegionY, 
 		int16_t Height = GET_GEO_HEIGHT(Layers[Index]);
 
 		if (PrevHeight <= Height)
-			throw new std::runtime_error("Layers required to be sorted (" + to_string(PrevHeight) + " > " + to_string(Height) + ")");
+			throw new runtime_error("Layers required to be sorted (" + to_string(PrevHeight) + " > " + to_string(Height) + ")");
 	}
 }
 
@@ -255,10 +253,10 @@ void L2Geodata::SetSubBlocks(int32_t WorldX, int32_t WorldY, int16_t Count, ...)
 void L2Geodata::AllocateData(void) {
 
 	if (FullData)
-		throw new std::runtime_error("GeoData is already allocated");
+		throw new runtime_error("GeoData is already allocated");
 
 	if (((SPECIAL_SUBBLOCK_EMPTY >> 8) & 0xFF) != (SPECIAL_SUBBLOCK_EMPTY & 0xFF))
-		throw new std::runtime_error("Invalid empty block special value");
+		throw new runtime_error("Invalid empty block special value");
 
 	FullData = (int16_t*)malloc(GEO_FULL_SIZE_IN_BYTES);
 
@@ -270,7 +268,7 @@ void L2Geodata::AllocateData(void) {
 int32_t L2Geodata::AllocateBlockMapEntry(void)
 {
 	if (NextMultilayerBlockMapIndex + 1 > MULTILAYER_BLOCK_LIMIT)
-		throw new std::runtime_error("Multilayer block count exceeds the limit");
+		throw new runtime_error("Multilayer block count exceeds the limit");
 
 	int32_t Index = NextMultilayerBlockMapIndex;
 	NextMultilayerBlockMapIndex++;
@@ -281,7 +279,7 @@ int32_t L2Geodata::AllocateBlockMapEntry(void)
 int32_t L2Geodata::AllocateLayersEntries(uint32_t Count)
 {
 	if (NextLayersTableIndex + Count > LAYERS_COUNT_LIMIT)
-		throw new std::runtime_error("Layers entries count exceeds the limit");
+		throw new runtime_error("Layers entries count exceeds the limit");
 
 	int32_t Index = NextLayersTableIndex;
 	NextLayersTableIndex += Count;
@@ -306,7 +304,7 @@ bool L2Geodata::LoadRegion(uint32_t RegionX, uint32_t RegionY, wstring FilePath,
 
 	if (Type == PTS) {
 
-		ifstream Stream(FilePath, std::ios::binary | std::ios::ate);
+		ifstream Stream(FilePath, ios::binary | ios::ate);
 		if (!Stream.is_open())
 			return false;
 
@@ -316,7 +314,7 @@ bool L2Geodata::LoadRegion(uint32_t RegionX, uint32_t RegionY, wstring FilePath,
 
 		size -= 18;
 
-		std::vector<int16_t> buffer(size / sizeof(int16_t));
+		vector<int16_t> buffer(size / sizeof(int16_t));
 
 		if (!Stream.seekg(18, ios_base::beg) || !Stream.read((char *)buffer.data(), size))
 			return false;
@@ -435,7 +433,7 @@ void L2Geodata::Load(wstring Directory, GeoType Type) {
 
 		bool Loaded = LoadRegion(regionX, regionY, path, Type);
 		if (!Loaded)
-			throw new std::runtime_error("Coudn't load geo file");
+			throw new runtime_error("Coudn't load geo file");
 	}
 
 	LONGLONG EndTime = GetTime();
@@ -455,7 +453,7 @@ void L2Geodata::LoadEasyGeo(wstring FilePath) {
 
 	LONGLONG StartTime = GetTime();
 
-	ifstream Stream(FilePath, std::ios::binary);
+	ifstream Stream(FilePath, ios::binary);
 
 	Stream.read((char *)FullData, GEO_FULL_SIZE_IN_BYTES);
 	Stream.read((char *)&MultilayerBlockMap, sizeof(MultilayerBlockMap));
@@ -466,7 +464,7 @@ void L2Geodata::LoadEasyGeo(wstring FilePath) {
 	Stream.read((char *)&NextLayersTableIndex, sizeof(NextLayersTableIndex));
 
 	if (Stream.fail())
-		throw new std::runtime_error("Couldn't load easygeo");
+		throw new runtime_error("Couldn't load easygeo");
 
 	LONGLONG EndTime = GetTime();
 
@@ -475,7 +473,7 @@ void L2Geodata::LoadEasyGeo(wstring FilePath) {
 
 void L2Geodata::SaveEasyGeo(wstring FilePath) {
 
-	ofstream Stream(FilePath, std::ios::binary);
+	ofstream Stream(FilePath, ios::binary);
 
 	Stream.write((char *)FullData, GEO_FULL_SIZE_IN_BYTES);
 	Stream.write((char *)&MultilayerBlockMap, sizeof(MultilayerBlockMap));
@@ -483,4 +481,121 @@ void L2Geodata::SaveEasyGeo(wstring FilePath) {
 	Stream.write((char *)&LayersTable, sizeof(LayersTable));
 	Stream.write((char *)&NextMultilayerBlockMapIndex, sizeof(NextMultilayerBlockMapIndex));
 	Stream.write((char *)&NextLayersTableIndex, sizeof(NextLayersTableIndex));
+}
+
+// Utils forward declaration
+
+int OffsetToNSWE(int OffsetX, int OffsetY);
+int32_t GetHeightDiff(int16_t From, int16_t To);
+
+// Usage utils
+
+void L2Geodata::GetLowAndHighLayers(int16_t SubBlock, int16_t* Layers, int16_t LayersCount, int16_t& LowLayerIndex, int16_t& HighLayerIndex) {
+
+	LowLayerIndex = -1;
+	HighLayerIndex = -1;
+
+	int16_t Height = GET_GEO_HEIGHT(SubBlock);
+
+	for (int Index = 0; Index < LayersCount; Index++) {
+
+		int16_t CurrentHeight = GET_GEO_HEIGHT(Layers[Index]);
+
+		if (CurrentHeight <= Height) {
+
+			LowLayerIndex = Index;
+			break;
+		}
+
+		HighLayerIndex = Index;
+	}
+}
+
+bool L2Geodata::CanGoInThisDirection(int16_t SubBlock, int DirectionX, int DirectionY)
+{
+	int NSWE = GET_GEO_NSWE(SubBlock);
+
+	return TEST_NSWE(NSWE, OffsetToNSWE(DirectionX, DirectionY));
+}
+
+bool L2Geodata::CanGoUnderneath(int16_t SubBlock, int16_t HigherSubBlock)
+{
+	int16_t Height = GET_GEO_HEIGHT(SubBlock);
+	int16_t HigherHeight = GET_GEO_HEIGHT(HigherSubBlock);
+
+	return GetHeightDiff(Height, HigherHeight) > L2Geodata::MIN_LAYER_DIFF;
+}
+
+bool L2Geodata::GetDestSubBlock(int16_t SubBlock, int OffsetX, int OffsetY, int16_t* Layers, int16_t LayersCount, int16_t& DestSubBlock)
+{
+	// just can't go in this direction
+	if (!CanGoInThisDirection(SubBlock, OffsetX, OffsetY))
+		return false;
+
+	int16_t LowLayerIndex, HighLayerIndex;
+	GetLowAndHighLayers(SubBlock, Layers, LayersCount, LowLayerIndex, HighLayerIndex);
+
+	if (HighLayerIndex != -1) {
+
+		int16_t HigherSubBlock = Layers[HighLayerIndex];
+		// if we cannot go underneath the higher subblock then we'll go right on it
+		if (!CanGoUnderneath(SubBlock, HigherSubBlock)) {
+
+			DestSubBlock = HigherSubBlock;
+			return true;
+		}
+	}
+
+	// at this moment we already not struggling with higher subblock
+	if (LowLayerIndex != -1) {
+
+		DestSubBlock = Layers[LowLayerIndex];
+		return true;
+	}
+
+	// or else we cannot go on higher block and don't even have lower block so we kinda stuck
+	return false;
+}
+
+bool L2Geodata::GetWallHeight(int16_t SubBlock, int OffsetX, int OffsetY, int16_t* Layers, int16_t LayersCount, int16_t& DestHeight)
+{
+	int16_t LowLayerIndex, HighLayerIndex;
+	GetLowAndHighLayers(SubBlock, Layers, LayersCount, LowLayerIndex, HighLayerIndex);
+	if (HighLayerIndex == -1)
+		return false;
+
+	DestHeight = GET_GEO_HEIGHT(Layers[HighLayerIndex]);
+
+	bool CantGoInThisDirection = !CanGoInThisDirection(SubBlock, OffsetX, OffsetY);
+	bool CantGoUnderneathHigherLayer = !CanGoUnderneath(SubBlock, Layers[HighLayerIndex]);
+	bool IsNothingUnderHigherLayer = LowLayerIndex == -1;
+
+	bool WallRequired = CantGoInThisDirection || CantGoUnderneathHigherLayer || IsNothingUnderHigherLayer;
+
+	return WallRequired;
+}
+
+// Utils
+
+int OffsetToNSWE(int OffsetX, int OffsetY) {
+
+	int Result = 0;
+
+	if (OffsetX == 1)
+		Result |= L2Geodata::EAST;
+	else
+		if (OffsetX == -1)
+			Result |= L2Geodata::WEST;
+
+	if (OffsetY == 1)
+		Result |= L2Geodata::SOUTH;
+	else
+		if (OffsetY == -1)
+			Result |= L2Geodata::NORTH;
+
+	return Result;
+}
+
+int32_t GetHeightDiff(int16_t From, int16_t To) {
+	return (int32_t)To - (int32_t)From;
 }

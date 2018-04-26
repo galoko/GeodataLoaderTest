@@ -32,8 +32,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance
 
 	L2Geodata::LoadEasyGeo(L"..\\data\\easygeo.bin");
 
-	Geo3DViewForm::Init(1280, 960, L"Geo3DView", L"Geodata 3D View", hInstance);
-	Geo3DViewForm::Show();
+	Geo3DViewForm::GetInstance().Init(1280, 960, L"Geo3DView", L"Geodata 3D View", hInstance);
+	Geo3DViewForm::GetInstance().Show();
 
 	LONGLONG LastTick = GetTime();
 
@@ -41,7 +41,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance
 	while (TRUE)
 	{
 		// wait for frame
-		Geo3DViewForm::WaitForNextFrame();
+		Geo3DViewForm::GetInstance().WaitForNextFrame();
 
 		// process input
 		if (!ProcessMessages())
@@ -53,7 +53,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance
 		LastTick = Now;
 
 		// actual draw call
-		Geo3DViewForm::Tick(dt);
+		Geo3DViewForm::GetInstance().Tick(dt);
 	}
 
 	return 0;
