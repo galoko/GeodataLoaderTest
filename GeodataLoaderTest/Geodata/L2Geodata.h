@@ -16,10 +16,11 @@ enum GeoType {
 
 class L2Geodata {
 public:
-	const static int16_t EAST      = 0x01;
-	const static int16_t WEST      = 0x02;
-	const static int16_t SOUTH     = 0x04;
-	const static int16_t NORTH     = 0x08;
+	// if flag is present then we can go to this offset, otherwise we can't
+	const static int16_t EAST      = 0x01; // +X
+	const static int16_t WEST      = 0x02; // -X
+	const static int16_t SOUTH     = 0x04; // +Y
+	const static int16_t NORTH     = 0x08; // -Y
 	const static int16_t NSWE_ALL  = EAST | WEST | SOUTH | NORTH;
 	const static int16_t NSWE_NONE = 0x00;
 

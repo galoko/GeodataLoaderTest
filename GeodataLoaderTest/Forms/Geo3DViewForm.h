@@ -72,8 +72,6 @@ private:
 	static void AddTopPlaneModel(int16_t SubBloc, int Direction);
 	static void GenerateTopPlanes(int GridX, int GridY);
 
-	static int16_t GetMeanHeight(HeightRange *HeightRanges, int HeightRangesCount);
-
 	static bool GetLowestHigherLayerHeight(int16_t Height, int16_t* Layers, int16_t LayersCount, int16_t& DestHeight);
 	static bool GetWallDestHeight(int16_t SubBlock, int OffsetX, int OffsetY, int16_t* Layers, int16_t LayersCount, int16_t& DestHeight);
 	static void GetHeightRanges(int GridX, int GridY, int OffsetX, int OffsetY, HeightRange *DestHeightRanges, int& DestHeightRangesCount);
@@ -89,6 +87,9 @@ private:
 	static void GenerateDebugGeodataScene(void);
 
 	static void GenerateDebugStaticScene(void);
+
+	static void PrintCurrentCoord(void);
+	static bool HandleKeyPress(int Key);
 
 	static void ProcessWindowState(void);
 	static void ProcessMouseInput(LONG dx, LONG dy);

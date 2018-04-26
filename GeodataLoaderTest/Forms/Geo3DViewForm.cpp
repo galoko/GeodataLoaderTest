@@ -5,6 +5,7 @@
 #include "Geo3DViewForm.h"
 
 #include "FormsUtils.h"
+#include "TimeUtils.h"
 
 #include <stdexcept>
 #include <iostream>
@@ -106,7 +107,7 @@ static vector<vector<Point>> SeparatedPoints;
 static vector<Point> Points;
 static vector<uint32_t> Indices;
 
-#define MAX_VERTICES (700 * 1000)
+#define MAX_VERTICES (700 * 1000 * 22)
 static InputVertex *VertexBuffer;
 static uint32_t NextVertexIndex;
 
@@ -123,6 +124,7 @@ static ID3D11RasterizerState *SolidMode;
 static ID3D11RasterizerState *WireFrameMode;
 
 static ID3D11Query *SyncQuery;
+static bool VSync = true;
 
 #define KEYS_COUNT 256
 static bool PressedKeys[KEYS_COUNT];
@@ -195,6 +197,10 @@ struct HeightRange {
 		 
 	void MergeWith(const HeightRange* OtherRange) {
 		this->End = max(OtherRange->End, this->End);
+	}
+
+	int16_t GetMeanHeight(void) {
+		return (int16_t) (((int32_t)Start + (int32_t)End) / 2);
 	}
 };
 
@@ -396,7 +402,8 @@ void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowC
 	CameraAngle.y = 3;
 	CameraAngle.x = 0;
 
-	CameraPosition.z = -269.5;
+	CameraPosition.z = -269.5f;
+	// CameraPosition.z = 999.8f;
 
 	Up = XMVectorSet(0, 0, 1, 1);
 
@@ -440,8 +447,12 @@ void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowC
 
 	// GenerateDebugStaticScene();
 	// GenerateDebugGeodataScene();
-	// GenerateGeodataScene(13100, 140572, 16 * 1, 16 * 1);
-	GenerateGeodataScene(79625, 143498, 16 * 500, 16 * 500);
+	GenerateGeodataScene(13100, 140572, 16 * 700, 16 * 700);
+	// GenerateGeodataScene(79625, 143498, 16 * 500, 16 * 500);
+	// GenerateGeodataScene(109780, 11200, 16 * 800, 16 * 800);
+	// GenerateGeodataScene(112964, 39885, 16 * 800, 16 * 800);
+	// GenerateGeodataScene(109780 + 16 * 202, 11200 + 16 * 156, 16 * 1, 16 * 2);
+	// GenerateGeodataScene(109780 + 16 * 385, 11200 + 16 * 149, 16 * 2, 16 * 1);
 	// GenerateGeodataScene(13100 + 16 * 253, 140572 + 16 * 267, 16 * 2, 16 * 1);
 	// GenerateGeodataScene(13100 + 16 * 79, 140572 + 16 * 120, 16 * 2, 16 * 2);
 	// GenerateGeodataScene(13100 + 16 * 1500, 140572 + 16 * 1500, 16 * 2500, 16 * 2500);
@@ -483,6 +494,32 @@ void Geo3DViewForm::GenerateDebugStaticScene(void) {
 	AllocateIndexIndex(Vertices[3]);
 
 	CommitScene();
+}
+
+void Geo3DViewForm::PrintCurrentCoord(void)
+{
+	POINT Coord = { (LONG)floor(CameraPosition.x), (LONG)floor(CameraPosition.y) };
+
+	cout << Coord.x << ", " << Coord.y << " | " << CameraPosition.z << endl;
+}
+
+bool Geo3DViewForm::HandleKeyPress(int Key)
+{
+	switch (Key) {
+	case  VK_ESCAPE:
+		PostQuitMessage(0);
+		break;
+	case 'U':
+		PrintCurrentCoord();
+		break;
+	case 'V':
+		VSync = !VSync;
+		break;
+	default:
+		return false;
+	}
+
+	return true;
 }
 
 bool TestNSWE(int NSWE, int Mask) {
@@ -1410,26 +1447,7 @@ void Geo3DViewForm::GenerateTopPlanes(int GridX, int GridY)
 	}
 }
 
-int16_t Geo3DViewForm::GetMeanHeight(HeightRange* HeightRanges, int HeightRangesCount)
-{
-	int32_t Min = MAXINT32;
-	int32_t Max = MININT32;
-
-	for (int Index = 0; Index < HeightRangesCount; Index++) {
-		Min = min(Min, HeightRanges[Index].Start);
-		Max = max(Max, HeightRanges[Index].End);
-	}
-
-	return ((int16_t) ((Min + Max) / 2)) & 0xFFF8;
-}
-
 int OffsetToNSWE(int OffsetX, int OffsetY) {
-
-	/*
-	POINT Offset = ToZeroBasePoint({ OffsetX, OffsetY });
-
-	return (1 + Offset.x) * 1 + (1 + Offset.y) * 4;
-	*/
 
 	int Result = 0;
 
@@ -1439,7 +1457,7 @@ int OffsetToNSWE(int OffsetX, int OffsetY) {
 	if (OffsetX == -1)
 		Result |= L2Geodata::WEST;
 
-	if (OffsetY == 1)
+	if (OffsetY ==  1)
 		Result |= L2Geodata::SOUTH;
 	else
 	if (OffsetY == -1)
@@ -1448,8 +1466,8 @@ int OffsetToNSWE(int OffsetX, int OffsetY) {
 	return Result;
 }
 
-int32_t GetHeightDiff(int16_t Height1, int16_t Height2) {
-	return (int32_t)Height1 - (int32_t)Height2;
+int32_t GetHeightDiff(int16_t From, int16_t To) {
+	return (int32_t)To - (int32_t)From;
 }
 
 bool Geo3DViewForm::GetLowestHigherLayerHeight(int16_t Height, int16_t* Layers, int16_t LayersCount, int16_t& DestHeight)
@@ -1481,7 +1499,7 @@ bool Geo3DViewForm::GetWallDestHeight(int16_t SubBlock, int OffsetX, int OffsetY
 	int16_t LowestHeight = GET_GEO_HEIGHT(Layers[LayersCount - 1]);
 
 	bool CantGoInThisDirection = !TestNSWE(NSWE, OffsetToNSWE(OffsetX, OffsetY));
-	bool CantGoUnderHigherLayer = GetHeightDiff(DestHeight, Height) < MinHeightDiffToBeAbleGoUnder;
+	bool CantGoUnderHigherLayer = GetHeightDiff(Height, DestHeight) < MinHeightDiffToBeAbleGoUnder;
 	bool IsNothingUnderHigherLayer = DestHeight == LowestHeight;
 
 	bool WallRequired = CantGoInThisDirection || CantGoUnderHigherLayer || IsNothingUnderHigherLayer;
@@ -1558,14 +1576,14 @@ void Geo3DViewForm::GenerateSidePlanes(int GridX, int GridY, int OffsetX, int Of
 	if (StartRangesCount == 0)
 		return;
 
-	int GridZ = GetGridZ(GetMeanHeight(StartRanges, StartRangesCount));
-
 	for (int16_t StartHeightIndex = 0; StartHeightIndex < StartRangesCount; StartHeightIndex++) {
 
-		int PlaneDirection = StartRanges[StartHeightIndex].Direction;
+		HeightRange *StartRange = &StartRanges[StartHeightIndex];
+
+		int PlaneDirection = StartRange->Direction;
 		POINT CurrentPoint = { GridX, GridY };
 
-		ResetPointUsageMap(DynamicX ? CurrentPoint.x : CurrentPoint.y, GridZ, true, true);
+		ResetPointUsageMap(DynamicX ? CurrentPoint.x : CurrentPoint.y, GetGridZ(StartRange->GetMeanHeight()), true, true);
 		ResetFloodFillStack();
 
 		PushGridCell(DynamicX ? CurrentPoint.x : CurrentPoint.y, StartHeightIndex);
@@ -1653,8 +1671,7 @@ void Geo3DViewForm::SetupGenerationGrid(int32_t WorldX, int32_t WorldY, uint32_t
 
 	// int MaxCellPerPolygon = (int)(sqrt(GridWidth * GridHeight) / 2); // 50%
 
-	int MaxCellPerPolygon = 400;
-	SetupPointUsageMap(MaxCellPerPolygon + 1, MaxCellPerPolygon + 1);
+	SetupPointUsageMap(400 + 1, 4096 + 1);
 
 	SetupFloodFillStack(1000 * 1000);
 }
@@ -1705,6 +1722,8 @@ void Geo3DViewForm::FinalizeGenerationGrid(void)
 
 void Geo3DViewForm::GenerateGeodataScene(int32_t WorldX, int32_t WorldY, uint32_t Width, uint32_t Height)
 {
+	LONGLONG StartTime = GetTime();
+
 	SetupGenerationGrid(WorldX, WorldY, Width, Height);
 
 	ResetScene();
@@ -1726,8 +1745,11 @@ void Geo3DViewForm::GenerateGeodataScene(int32_t WorldX, int32_t WorldY, uint32_
 
 	FinalizeGenerationGrid();
 
+	LONGLONG EndTime = GetTime();
+
 	cout << NextVertexIndex << " verticies was used" << endl;
 	cout << NextIndexIndex << " indices was used" << endl;
+	cout << "Scene generated for " << TimeToMs(EndTime - StartTime) << " ms" << endl;
 }
 
 void Geo3DViewForm::ProcessWindowState(void)
@@ -1796,14 +1818,13 @@ LRESULT Geo3DViewForm::WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam
 			ProcessMouseInput(RawInput.data.mouse.lLastX, RawInput.data.mouse.lLastY);
 
 		break;
-	case WM_KEYDOWN:
+	case WM_KEYDOWN: {
+		int Key = (int)wParam;
 
-		if (wParam == VK_ESCAPE)
-			PostQuitMessage(0);
-		else
-			if (wParam < KEYS_COUNT)
-				PressedKeys[wParam] = true;
+		if (!HandleKeyPress(Key) && Key < KEYS_COUNT)
+			PressedKeys[Key] = true;
 		break;
+	}
 	case WM_KEYUP:
 		if (wParam < KEYS_COUNT)
 			PressedKeys[wParam] = false;
@@ -1914,7 +1935,7 @@ void Geo3DViewForm::DrawScene(void)
 		DirectDeviceCtx->End(SyncQuery);
 
 	// switch the back buffer and the front buffer
-	SwapChain->Present(1, 0);
+	SwapChain->Present(VSync ? 1 : 0, 0);
 }
 
 void Geo3DViewForm::Tick(double dt) {
