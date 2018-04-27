@@ -54,7 +54,6 @@ private:
 		XMFLOAT4X4 WorldMatrix;
 		XMFLOAT4X4 FinalMatrix;
 	};
-
 	ShaderMatricesStruct ShaderMatrices;
 	ID3D11Buffer *ShaderMatricesRef;
 
@@ -69,14 +68,13 @@ private:
 		XMFLOAT3 LightDirection;
 		float Padding3;
 	};
-
 	LightOptionsStruct LightOptions;
 	ID3D11Buffer *LightOptionsRef;
 
 	ID3D11Texture2D *NSWETexture;
 	ID3D11ShaderResourceView *NSWEView;
 
-	static const int MAX_VERTICES = 700 * 1000 * 22;
+	static const int MAX_VERTICES = 700 * 1000 * 2;
 	GeodataVertex *VertexBuffer;
 	uint32_t VertexBufferSize;
 	ID3D11Buffer *SceneVertexBuffer;

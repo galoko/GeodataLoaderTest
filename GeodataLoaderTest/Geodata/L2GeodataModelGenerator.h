@@ -90,11 +90,10 @@ private:
 	UsageInfo *PointUsageMap;
 	RECT PointUsageMapUsedBoundBox;
 
-	// Mem cache for hull generation
-	vector<Point> Hull;
-
 	// Points generated based on Point Usage map, used by EarCut algorithm
 
+	// Mem cache for hull generation
+	vector<Point> Hull;
 	// EarCut input
 	vector<vector<Point>> SeparatedPoints;
 	// EarCut output index for this list
@@ -109,6 +108,7 @@ private:
 	void SetupOutputBuffers(GeodataVertex *VertexBuffer, uint32_t VertexBufferSize, uint32_t *IndexBuffer, uint32_t IndexBufferSize);
 	uint32_t AllocateVertexIndex(void);
 	uint32_t AllocateIndexIndex(uint32_t Index);
+	void SetOutputBuffersToDefaultValues(void);
 
 	// Geodata utils
 
@@ -158,8 +158,6 @@ private:
 	bool PopStackPoint(POINT& Point);
 	void FinalizeFloodFillStack(void);
 public:
-	L2GeodataModelGenerator(void) { };
-
 	static const int NSWE_TEX_WIDTH = 16;
 	static const int NSWE_TEX_HEIGHT = 16 * NSWE_TEX_WIDTH;
 		

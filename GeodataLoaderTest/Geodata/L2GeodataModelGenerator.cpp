@@ -11,6 +11,8 @@ void L2GeodataModelGenerator::GenerateGeodataScene(int32_t WorldX, int32_t World
 {
 	SetupOutputBuffers(VertexBuffer, VertexBufferSize, IndexBuffer, IndexBufferSize);
 
+	SetupFloodFillStack(1000 * 1000);
+	SetupPointUsageMap(400 + 1, 4096 + 1);
 	SetupGenerationGrid(WorldX, WorldY, Width, Height);
 
 	for (uint32_t GridX = 0; GridX < GridWidth; GridX++)
@@ -22,10 +24,14 @@ void L2GeodataModelGenerator::GenerateGeodataScene(int32_t WorldX, int32_t World
 		}
 
 	FinalizeGenerationGrid();
+	FinalizePointUsageMap();
+	FinalizeFloodFillStack();
 
 	// Setup output
 	VertexBufferSize = NextVertexIndex;
 	IndexBufferSize = NextIndexIndex;
+
+	SetOutputBuffersToDefaultValues();
 }
 
 // Allocation
@@ -63,6 +69,17 @@ uint32_t L2GeodataModelGenerator::AllocateIndexIndex(uint32_t Index)
 	IndexBuffer[Ret] = Index;
 
 	return Ret;
+}
+
+void L2GeodataModelGenerator::SetOutputBuffersToDefaultValues(void)
+{
+	VertexBuffer = NULL;
+	VertexBufferSize = 0;
+	NextVertexIndex = 0;
+
+	IndexBuffer = NULL;
+	IndexBufferSize = 0;
+	NextIndexIndex = 0;
 }
 
 // Geodata utils
@@ -448,12 +465,6 @@ void L2GeodataModelGenerator::SetupGenerationGrid(int32_t WorldX, int32_t WorldY
 	GridHeight = Height / L2Geodata::GEO_COORDS_IN_WORLD_COORDS;
 
 	GridUsageMap = (uint8_t*)calloc((GridWidth * GridHeight * 3 * MAX_HEIGHT_RANGES_COUNT + 7) / 8, 1);
-
-	// int MaxCellPerPolygon = (int)(sqrt(GridWidth * GridHeight) / 2); // 50%
-
-	SetupPointUsageMap(400 + 1, 4096 + 1);
-
-	SetupFloodFillStack(1000 * 1000);
 }
 
 bool L2GeodataModelGenerator::IsInGridBound(int GridX, int GridY)
@@ -495,9 +506,6 @@ void L2GeodataModelGenerator::FinalizeGenerationGrid(void)
 
 	GridWidth = 0;
 	GridHeight = 0;
-
-	FinalizeFloodFillStack();
-	FinalizePointUsageMap();
 }
 
 // Point Usage

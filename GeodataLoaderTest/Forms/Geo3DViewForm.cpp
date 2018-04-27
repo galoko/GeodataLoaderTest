@@ -286,7 +286,7 @@ void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowC
 
 	// scene init
 
-	GenerateGeodataScene(13100, 140572, 16 * 512 * 3, 16 * 512 * 3);
+	GenerateGeodataScene(13100, 140572, 16 * 512 * 1, 16 * 512 * 1);
 	// GenerateGeodataScene(79625, 143498, 16 * 500, 16 * 500);
 	// GenerateGeodataScene(109780, 11200, 16 * 800, 16 * 800);
 	// GenerateGeodataScene(112964, 39885, 16 * 800, 16 * 800);
@@ -410,7 +410,7 @@ void Geo3DViewForm::CommitGeodataScene(void) {
 	D3D11_BOX Region = { };
 	Region.bottom = 1;
 	Region.back = 1;
-
+	
 	Region.right = VertexBufferSize * sizeof(*VertexBuffer);
 	DirectDeviceCtx->UpdateSubresource(SceneVertexBuffer, 0, &Region, VertexBuffer, 0, 0);
 
@@ -434,6 +434,7 @@ void Geo3DViewForm::GenerateGeodataScene(int32_t WorldX, int32_t WorldY, uint32_
 
 	cout << VertexBufferSize << " verticies was used" << endl;
 	cout << IndexBufferSize << " indices was used" << endl;
+	cout << VertexBufferSize * sizeof(*VertexBuffer) + IndexBufferSize * sizeof(*IndexBuffer) << " bytes was used" << endl;
 	cout << "Scene generated for " << TimeToMs(EndTime - StartTime) << " ms" << endl;
 }
 
