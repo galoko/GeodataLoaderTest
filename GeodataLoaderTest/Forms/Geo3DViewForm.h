@@ -67,7 +67,7 @@ private:
 		float Padding2;
 
 		XMFLOAT3 LightDirection;
-		float Padding3;
+		float LightEnabled;
 	};
 	LightOptionsStruct LightOptions;
 	ID3D11Buffer *LightOptionsRef;

@@ -261,6 +261,7 @@ void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowC
 	LightOptions.AmbientColor = { 0.125f, 0.125f, 0.75f };
 	LightOptions.DiffuseColor = { 0.5f, 0.5f, 75.0f };
 	XMStoreFloat3(&LightOptions.LightDirection, XMVector3Normalize(XMVectorSet(-0.512651205f, 0.189535633f, -0.837415695f, 1.0f)));
+	LightOptions.LightEnabled = NSWETextureEnabled;
 
 	DirectDeviceCtx->UpdateSubresource(LightOptionsRef, 0, NULL, &LightOptions, 0, 0);
 
@@ -393,6 +394,9 @@ void Geo3DViewForm::PrintCurrentCoord(void)
 void Geo3DViewForm::SwitchNSWETextureMode(void)
 {
 	NSWETextureEnabled = !NSWETextureEnabled;
+
+	LightOptions.LightEnabled = NSWETextureEnabled;
+	DirectDeviceCtx->UpdateSubresource(LightOptionsRef, 0, NULL, &LightOptions, 0, 0);
 }
 
 // Window Callback

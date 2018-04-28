@@ -9,6 +9,7 @@ cbuffer LightOptions : register(b0)
     float3 AmbientColor;
     float3 DiffuseColor;
     float3 LightDirection;
+    float  LightEnabled;
 }
 
 SamplerState SmoothSampler : register(s0);
@@ -77,7 +78,8 @@ float4 PS(PS_INPUT input) : SV_Target
         Color = float4(1.0f, 1.0f, 1.0f, 1.0f);
         
     // then light
-    Color = ApplyLight(Color, input.Normal);
+    if (LightEnabled > 0.5f)
+        Color = ApplyLight(Color, input.Normal);
     
     // then NSWE texture if any
     if (input.Tex1.z >= 0.0) {

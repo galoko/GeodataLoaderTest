@@ -347,7 +347,7 @@ void L2GeodataModelGenerator::GenerateTopPlanes(int GridX, int GridY)
 			else
 				LayerIndexToUse = -1;
 
-			if (INITIAL_LAYER_COMPLIANCE && LayerIndexToUse != LayerIndex)
+			if (TOP_LAYER_COMPLIANCE && (LayerIndex == 0 || LayerIndexToUse == 0) && LayerIndexToUse != LayerIndex)
 				LayerIndexToUse = -1;
 
 			if (LayerIndexToUse != -1) {
@@ -443,7 +443,11 @@ void L2GeodataModelGenerator::GenerateSidePlanes(int GridX, int GridY, int Offse
 
 			Vertex->Pos = { (float)(GridSubBlockX + (DynamicX ? P[0] : GridX + 1)) / (float)InvScaleWorld, (float)(GridSubBlockY + (!DynamicX ? P[0] : GridY + 1)) / (float)InvScaleWorld, (float)GridZToHeight(P[1]) / (float)InvScaleZ };
 			Vertex->Normal = { (float)(OffsetX * -PlaneDirection), (float)(OffsetY * -PlaneDirection), 0 };
-			Vertex->Tex = { -1, 0 };
+			// TODO
+			if (true)
+				Vertex->Tex = { (float)(DynamicX ? P[0] : GridX + 1) / (float)GridWidth, (float)(!DynamicX ? P[0] : GridY + 1) / (float)GridHeight };
+			else
+				Vertex->Tex = { -1, 0 };
 			Vertex->NSWETex = { 0, 0, -1 };
 		}
 

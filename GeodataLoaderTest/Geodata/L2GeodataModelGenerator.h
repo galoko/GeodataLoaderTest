@@ -12,7 +12,7 @@ using namespace DirectX;
 
 // this need to be on if you need separate polygons by they layer index
 // e.g. for top view texture, this way it would be applied only to actual top layer
-#define INITIAL_LAYER_COMPLIANCE true
+#define TOP_LAYER_COMPLIANCE true
 
 #pragma pack(push,1)
 struct GeodataVertex
