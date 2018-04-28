@@ -78,7 +78,7 @@ float4 PS(PS_INPUT input) : SV_Target
         Color = float4(1.0f, 1.0f, 1.0f, 1.0f);
         
     // then light
-    if (LightEnabled > 0.5f)
+    if (input.Tex0.x < 0.0 || Color.a == 0.0f || LightEnabled > 0.5f)
         Color = ApplyLight(Color, input.Normal);
     
     // then NSWE texture if any

@@ -37,16 +37,18 @@ private:
 
 	struct HeightRange {
 		int Direction;
-		int16_t Start, End;
+		int16_t Start, End, TopLayerIndex, LowestLayerIndex;
 
 		HeightRange() { };
 
-		HeightRange(int16_t Start, int16_t End);
-		bool SortedOverlapTestWith(const HeightRange* OtherRange);
-		bool OverlapTestWith(const HeightRange* OtherRange);
-		bool DirectionInvariantOverlapTestWith(const HeightRange* OtherRange);
-		void MergeWith(const HeightRange* OtherRange);
+		HeightRange(int16_t Start, int16_t StartLayerIndex, int16_t End, int16_t EndLayerIndex);
+		bool SortedOverlapTestWith(HeightRange* OtherRange);
+		bool OverlapTestWith(HeightRange* OtherRange);
+		void MergeWith(HeightRange* OtherRange);
 		int16_t GetMeanHeight(void);
+		bool HaveTopLayer(void);
+		bool IsLayersCompatible(HeightRange* OtherRange);
+		void CutTo(HeightRange* OtherRange, bool Direction);
 
 		bool operator < (const HeightRange& Other);
 	};

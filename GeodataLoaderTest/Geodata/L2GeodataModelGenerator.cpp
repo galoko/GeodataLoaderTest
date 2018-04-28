@@ -107,24 +107,30 @@ void L2GeodataModelGenerator::GetHeightRanges(int GridX, int GridY, int OffsetX,
 
 	for (int LayerIndex = 0; LayerIndex < LayersCount; LayerIndex++) {
 
-		int16_t DestHeight;
+		int16_t DestLayerIndex;
 
-		if (!L2Geodata::GetWallHeight(Layers[LayerIndex], OffsetX, OffsetY, DestLayers, DestLayersCount, DestHeight))
+		if (!L2Geodata::GetWallLayerIndex(Layers[LayerIndex], OffsetX, OffsetY, DestLayers, DestLayersCount, DestLayerIndex))
 			continue;
 
-		HeightRanges[HeightRangesIndex++] = HeightRange(GET_GEO_HEIGHT(Layers[LayerIndex]), DestHeight);
-		HeightRanges[HeightRangesIndex++] = HeightRange(DestHeight, GET_GEO_HEIGHT(Layers[LayerIndex]));
+		int16_t Height = GET_GEO_HEIGHT(Layers[LayerIndex]);
+		int16_t DestHeight = GET_GEO_HEIGHT(DestLayers[DestLayerIndex]);
+
+		HeightRanges[HeightRangesIndex++] = HeightRange(Height, LayerIndex, DestHeight, DestLayerIndex);
+		HeightRanges[HeightRangesIndex++] = HeightRange(DestHeight, DestLayerIndex, Height, LayerIndex);
 	}
 
 	for (int DestLayerIndex = 0; DestLayerIndex < DestLayersCount; DestLayerIndex++) {
 
-		int16_t DestHeight;
+		int16_t LayerIndex;
 
-		if (!L2Geodata::GetWallHeight(DestLayers[DestLayerIndex], -OffsetX, -OffsetY, Layers, LayersCount, DestHeight))
+		if (!L2Geodata::GetWallLayerIndex(DestLayers[DestLayerIndex], -OffsetX, -OffsetY, Layers, LayersCount, LayerIndex))
 			continue;
 
-		HeightRanges[HeightRangesIndex++] = HeightRange(DestHeight, GET_GEO_HEIGHT(DestLayers[DestLayerIndex]));
-		HeightRanges[HeightRangesIndex++] = HeightRange(GET_GEO_HEIGHT(DestLayers[DestLayerIndex]), DestHeight);
+		int16_t Height = GET_GEO_HEIGHT(Layers[LayerIndex]);
+		int16_t DestHeight = GET_GEO_HEIGHT(DestLayers[DestLayerIndex]);
+
+		HeightRanges[HeightRangesIndex++] = HeightRange(DestHeight, DestLayerIndex, Height, LayerIndex);
+		HeightRanges[HeightRangesIndex++] = HeightRange(Height, LayerIndex, DestHeight, DestLayerIndex);
 	}
 
 	if (HeightRangesIndex > 0) {
@@ -136,8 +142,21 @@ void L2GeodataModelGenerator::GetHeightRanges(int GridX, int GridY, int OffsetX,
 		for (int Index = 1; Index < HeightRangesIndex; Index++) {
 
 			HeightRange* NextRange = &HeightRanges[Index];
-			if (CurrentRange->SortedOverlapTestWith(NextRange))
-				CurrentRange->MergeWith(NextRange);
+			if (CurrentRange->SortedOverlapTestWith(NextRange)) {
+
+				if (CurrentRange->IsLayersCompatible(NextRange))
+					CurrentRange->MergeWith(NextRange);
+				else {
+
+					if (CurrentRange->HaveTopLayer())
+						NextRange->CutTo(CurrentRange, false);
+					else
+						CurrentRange->CutTo(NextRange, true);
+
+					CurrentRange = &DestHeightRanges[DestHeightRangesCount++];
+					*CurrentRange = *NextRange;
+				}
+			}
 			else {
 				CurrentRange = &DestHeightRanges[DestHeightRangesCount++];
 				*CurrentRange = *NextRange;
@@ -444,7 +463,7 @@ void L2GeodataModelGenerator::GenerateSidePlanes(int GridX, int GridY, int Offse
 			Vertex->Pos = { (float)(GridSubBlockX + (DynamicX ? P[0] : GridX + 1)) / (float)InvScaleWorld, (float)(GridSubBlockY + (!DynamicX ? P[0] : GridY + 1)) / (float)InvScaleWorld, (float)GridZToHeight(P[1]) / (float)InvScaleZ };
 			Vertex->Normal = { (float)(OffsetX * -PlaneDirection), (float)(OffsetY * -PlaneDirection), 0 };
 			// TODO
-			if (true)
+			if (StartRange->TopLayerIndex == 0 && StartRange->LowestLayerIndex == 0)
 				Vertex->Tex = { (float)(DynamicX ? P[0] : GridX + 1) / (float)GridWidth, (float)(!DynamicX ? P[0] : GridY + 1) / (float)GridHeight };
 			else
 				Vertex->Tex = { -1, 0 };
@@ -818,7 +837,7 @@ int GetDirection(int16_t From, int16_t To) {
 
 // HeightRange
 
-L2GeodataModelGenerator::HeightRange::HeightRange(int16_t Start, int16_t End) {
+L2GeodataModelGenerator::HeightRange::HeightRange(int16_t Start, int16_t StartLayerIndex, int16_t End, int16_t EndLayerIndex) {
 
 	Direction = GetDirection(Start, End);
 	assert(Direction != 0);
@@ -831,26 +850,50 @@ L2GeodataModelGenerator::HeightRange::HeightRange(int16_t Start, int16_t End) {
 		this->Start = Start;
 		this->End = End;
 	}
+
+	this->TopLayerIndex = min(StartLayerIndex, EndLayerIndex);
+	this->LowestLayerIndex = max(StartLayerIndex, EndLayerIndex);
 }
 
-bool L2GeodataModelGenerator::HeightRange::SortedOverlapTestWith(const HeightRange* OtherRange) {
+bool L2GeodataModelGenerator::HeightRange::SortedOverlapTestWith(HeightRange* OtherRange) {
+
 	return (OtherRange->Direction == this->Direction && OtherRange->Start <= this->End);
 }
 
-bool L2GeodataModelGenerator::HeightRange::OverlapTestWith(const HeightRange* OtherRange) {
-	return (OtherRange->Direction == this->Direction && OtherRange->Start < this->End && OtherRange->End > this->Start);
+bool L2GeodataModelGenerator::HeightRange::OverlapTestWith(HeightRange* OtherRange) {
+
+	return (IsLayersCompatible(OtherRange) && OtherRange->Direction == this->Direction && OtherRange->Start < this->End && OtherRange->End > this->Start);
 }
 
-bool L2GeodataModelGenerator::HeightRange::DirectionInvariantOverlapTestWith(const HeightRange* OtherRange) {
-	return (OtherRange->Start < this->End && OtherRange->End > this->Start);
-}
-
-void L2GeodataModelGenerator::HeightRange::MergeWith(const HeightRange* OtherRange) {
+void L2GeodataModelGenerator::HeightRange::MergeWith(HeightRange* OtherRange) {
 	this->End = max(OtherRange->End, this->End);
+	this->TopLayerIndex = min(OtherRange->TopLayerIndex, this->TopLayerIndex);
+	this->LowestLayerIndex = max(OtherRange->LowestLayerIndex, this->LowestLayerIndex);
 }
 
 int16_t L2GeodataModelGenerator::HeightRange::GetMeanHeight(void) {
 	return (int16_t)(((int32_t)Start + (int32_t)End) / 2);
+}
+
+bool L2GeodataModelGenerator::HeightRange::HaveTopLayer(void)
+{
+	return !TOP_LAYER_COMPLIANCE || (this->TopLayerIndex == 0 && this->LowestLayerIndex == 0);
+}
+
+bool L2GeodataModelGenerator::HeightRange::IsLayersCompatible(HeightRange* OtherRange)
+{
+	return this->HaveTopLayer() == OtherRange->HaveTopLayer();
+}
+
+void L2GeodataModelGenerator::HeightRange::CutTo(HeightRange* OtherRange, bool Direction)
+{
+	if (OtherRange->Direction != this->Direction)
+		throw new runtime_error("Attemp to cut ranges with different direction");
+
+	if (Direction)
+		this->End = min(this->End, OtherRange->Start);
+	else
+		this->Start = max(this->Start, OtherRange->End);
 }
 
 bool L2GeodataModelGenerator::HeightRange::operator < (const HeightRange& Other) {

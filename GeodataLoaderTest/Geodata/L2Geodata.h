@@ -123,7 +123,7 @@ public:
 	static void SetSubBlocks(int32_t WorldX, int32_t WorldY, int16_t Count, ...);
 
 	static bool GetDestSubBlock(int16_t SubBlock, int OffsetX, int OffsetY, int16_t* Layers, int16_t LayersCount, int16_t& DestSubBlock);
-	static bool GetWallHeight(int16_t SubBlock, int OffsetX, int OffsetY, int16_t* Layers, int16_t LayersCount, int16_t& DestHeight);
+	static bool GetWallLayerIndex(int16_t SubBlock, int OffsetX, int OffsetY, int16_t* Layers, int16_t LayersCount, int16_t& DestLayerIndex);
 
 	static bool WorldToGeo(int32_t WorldX, int32_t WorldY, uint32_t *GeoX, uint32_t *GeoY);
 };

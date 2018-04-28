@@ -557,14 +557,14 @@ bool L2Geodata::GetDestSubBlock(int16_t SubBlock, int OffsetX, int OffsetY, int1
 	return false;
 }
 
-bool L2Geodata::GetWallHeight(int16_t SubBlock, int OffsetX, int OffsetY, int16_t* Layers, int16_t LayersCount, int16_t& DestHeight)
+bool L2Geodata::GetWallLayerIndex(int16_t SubBlock, int OffsetX, int OffsetY, int16_t* Layers, int16_t LayersCount, int16_t& DestLayerIndex)
 {
 	int16_t LowLayerIndex, HighLayerIndex;
 	GetLowAndHighLayers(SubBlock, Layers, LayersCount, LowLayerIndex, HighLayerIndex);
 	if (HighLayerIndex == -1)
 		return false;
 
-	DestHeight = GET_GEO_HEIGHT(Layers[HighLayerIndex]);
+	DestLayerIndex = HighLayerIndex;
 
 	bool CantGoInThisDirection = !CanGoInThisDirection(SubBlock, OffsetX, OffsetY);
 	bool CantGoUnderneathHigherLayer = !CanGoUnderneath(SubBlock, Layers[HighLayerIndex]);
