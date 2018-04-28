@@ -87,7 +87,6 @@ public:
 	static inline int16_t *GetGeoSubBlockPtr(uint32_t GeoX, uint32_t GeoY);
 	static int16_t *GetWorldSubBlockPtr(int32_t WorldX, int32_t WorldY);
 
-	static inline bool WorldToGeo(int32_t WorldX, int32_t WorldY, uint32_t *GeoX, uint32_t *GeoY);
 	static inline bool GeoToWorld(uint32_t GeoX, uint32_t GeoY, int32_t *WorldX, int32_t *WorldY);
 	static inline int16_t *GetGeoSubBlockPtrInternal(uint32_t RegionX, uint32_t RegionY,
 		uint32_t BlockX, uint32_t BlockY, uint32_t SubBlockX, uint32_t SubBlockY);
@@ -125,4 +124,6 @@ public:
 
 	static bool GetDestSubBlock(int16_t SubBlock, int OffsetX, int OffsetY, int16_t* Layers, int16_t LayersCount, int16_t& DestSubBlock);
 	static bool GetWallHeight(int16_t SubBlock, int OffsetX, int OffsetY, int16_t* Layers, int16_t LayersCount, int16_t& DestHeight);
+
+	static bool WorldToGeo(int32_t WorldX, int32_t WorldY, uint32_t *GeoX, uint32_t *GeoY);
 };

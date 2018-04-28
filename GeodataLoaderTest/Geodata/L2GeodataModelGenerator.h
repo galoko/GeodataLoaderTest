@@ -10,6 +10,10 @@
 using namespace std;
 using namespace DirectX;
 
+// this need to be on if you need separate polygons by they layer index
+// e.g. for top view texture, this way it would be applied only to actual top layer
+#define INITIAL_LAYER_COMPLIANCE true
+
 #pragma pack(push,1)
 struct GeodataVertex
 {
@@ -67,8 +71,8 @@ private:
 
 	// Generation Grid definition
 
-	uint32_t GridWorldX;
-	uint32_t GridWorldY;
+	int32_t GridSubBlockX;
+	int32_t GridSubBlockY;
 	uint32_t GridWidth;
 	uint32_t GridHeight;
 
@@ -121,7 +125,7 @@ private:
 	bool GenerateConcaveHullAndHolesFromUsageMap(void);
 	bool GenerateModelFromUsageMap(void);
 
-	void AddTopPlaneModel(int16_t SubBloc, int Direction);
+	void AddTopPlaneModel(int16_t SubBloc, int Direction, int16_t LayerIndex);
 
 	void GenerateTopPlanes(int GridX, int GridY);
 	void GenerateSidePlanes(int GridX, int GridY, int OffsetX, int OffsetY);
@@ -158,11 +162,14 @@ private:
 	bool PopStackPoint(POINT& Point);
 	void FinalizeFloodFillStack(void);
 public:
+	static const int InvScaleWorld = 10000;
+	static const int InvScaleZ = 10 * InvScaleWorld;
+
 	static const int NSWE_TEX_WIDTH = 16;
 	static const int NSWE_TEX_HEIGHT = 16 * NSWE_TEX_WIDTH;
 		
 	void GenerateGeodataScene(int32_t WorldX, int32_t WorldY, uint32_t Width, uint32_t Height, GeodataVertex *VertexBuffer, uint32_t &VertexBufferSize,
 		uint32_t *IndexBuffer, uint32_t &IndexBufferSize);
 
-	static void GenerateNSWETexture(uint32_t Pixels[NSWE_TEX_HEIGHT][NSWE_TEX_WIDTH]);
+	static void GenerateNSWETexture(uint32_t* Pixels, int32_t Width, int32_t Height);
 };

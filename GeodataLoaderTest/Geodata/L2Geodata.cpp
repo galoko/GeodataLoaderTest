@@ -257,7 +257,7 @@ void L2Geodata::AllocateData(void) {
 
 	if (((SPECIAL_SUBBLOCK_EMPTY >> 8) & 0xFF) != (SPECIAL_SUBBLOCK_EMPTY & 0xFF))
 		throw new runtime_error("Invalid empty block special value");
-
+	
 	FullData = (int16_t*)malloc(GEO_FULL_SIZE_IN_BYTES);
 
 	memset(FullData, SPECIAL_SUBBLOCK_EMPTY & 0xFF, GEO_FULL_SIZE_IN_BYTES);

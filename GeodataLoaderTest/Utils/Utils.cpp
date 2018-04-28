@@ -14,6 +14,10 @@ POINT AddPoint(POINT P1, POINT P2) {
 	return { P1.x + P2.x, P1.y + P2.y };
 }
 
+POINT SubtractPoint(POINT P1, POINT P2) {
+	return { P1.x - P2.x, P1.y - P2.y };
+}
+
 POINT NegatePoint(POINT P) {
 	return { -P.x, -P.y };
 }

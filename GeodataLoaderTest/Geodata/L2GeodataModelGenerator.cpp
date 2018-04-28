@@ -86,8 +86,8 @@ void L2GeodataModelGenerator::SetOutputBuffersToDefaultValues(void)
 
 void L2GeodataModelGenerator::GetGeoLayers(int32_t GridX, int32_t GridY, int16_t& LayersCount, int16_t*& Layers)
 {
-	int32_t X = GridWorldX + GridX * L2Geodata::GEO_COORDS_IN_WORLD_COORDS;
-	int32_t Y = GridWorldY + GridY * L2Geodata::GEO_COORDS_IN_WORLD_COORDS;
+	int32_t X = (GridSubBlockX + GridX) * L2Geodata::GEO_COORDS_IN_WORLD_COORDS;
+	int32_t Y = (GridSubBlockY + GridY) * L2Geodata::GEO_COORDS_IN_WORLD_COORDS;
 
 	Layers = L2Geodata::GetSubBlocks(X, Y, LayersCount);
 }
@@ -269,7 +269,7 @@ bool L2GeodataModelGenerator::GenerateModelFromUsageMap(void)
 	return true;
 }
 
-void L2GeodataModelGenerator::AddTopPlaneModel(int16_t SubBlock, int Direction)
+void L2GeodataModelGenerator::AddTopPlaneModel(int16_t SubBlock, int Direction, int16_t LayerIndex)
 {
 	int NSWE = GET_GEO_NSWE(SubBlock);
 	float TexOffsetY = (float)(15 - NSWE) / 16.0f;
@@ -283,10 +283,12 @@ void L2GeodataModelGenerator::AddTopPlaneModel(int16_t SubBlock, int Direction)
 
 		GeodataVertex *Vertex = &VertexBuffer[VertexIndex];
 
-		Vertex->Pos = { (float)P[0], (float)P[1], (float)GET_GEO_HEIGHT(SubBlock) * 0.1f };
+		Vertex->Pos = { (float) (GridSubBlockX + P[0]) / (float)InvScaleWorld, (float)(GridSubBlockY + P[1]) / (float)InvScaleWorld, (float)GET_GEO_HEIGHT(SubBlock) / (float)InvScaleZ };
 		Vertex->Normal = { 0, 0, (float)Direction };
-		// TODO map to some real texture I guess?
-		Vertex->Tex = { -1, 0 };
+		if (LayerIndex == 0 && Direction == 1)
+			Vertex->Tex = { (float)P[0] / (float)GridWidth, (float)P[1] / (float)GridHeight };
+		else
+			Vertex->Tex = { -1, 0 };
 		Vertex->NSWETex = { (float)P[0], (float)P[1], TexOffsetY };
 	}
 
@@ -345,6 +347,9 @@ void L2GeodataModelGenerator::GenerateTopPlanes(int GridX, int GridY)
 			else
 				LayerIndexToUse = -1;
 
+			if (INITIAL_LAYER_COMPLIANCE && LayerIndexToUse != LayerIndex)
+				LayerIndexToUse = -1;
+
 			if (LayerIndexToUse != -1) {
 
 				SetGridSideUsage(CurrentPoint.x, CurrentPoint.y, 0, LayerIndexToUse);
@@ -363,8 +368,8 @@ void L2GeodataModelGenerator::GenerateTopPlanes(int GridX, int GridY)
 		if (!GenerateModelFromUsageMap())
 			throw new runtime_error("Couldn't generate model for top plane");
 
-		AddTopPlaneModel(SubBlock, 1);
-		AddTopPlaneModel(SubBlock, -1);
+		AddTopPlaneModel(SubBlock,  1, LayerIndex);
+		AddTopPlaneModel(SubBlock, -1, LayerIndex);
 	}
 }
 
@@ -436,9 +441,8 @@ void L2GeodataModelGenerator::GenerateSidePlanes(int GridX, int GridY, int Offse
 
 			GeodataVertex *Vertex = &VertexBuffer[VertexIndex];
 
-			Vertex->Pos = { (float)(DynamicX ? P[0] : GridX + 1), (float)(!DynamicX ? P[0] : GridY + 1), (float)GridZToHeight(P[1]) * 0.1f };
+			Vertex->Pos = { (float)(GridSubBlockX + (DynamicX ? P[0] : GridX + 1)) / (float)InvScaleWorld, (float)(GridSubBlockY + (!DynamicX ? P[0] : GridY + 1)) / (float)InvScaleWorld, (float)GridZToHeight(P[1]) / (float)InvScaleZ };
 			Vertex->Normal = { (float)(OffsetX * -PlaneDirection), (float)(OffsetY * -PlaneDirection), 0 };
-			// TODO map to some real texture I guess?
 			Vertex->Tex = { -1, 0 };
 			Vertex->NSWETex = { 0, 0, -1 };
 		}
@@ -458,8 +462,8 @@ void L2GeodataModelGenerator::GenerateSidePlanes(int GridX, int GridY, int Offse
 
 void L2GeodataModelGenerator::SetupGenerationGrid(int32_t WorldX, int32_t WorldY, uint32_t Width, uint32_t Height)
 {
-	GridWorldX = WorldX;
-	GridWorldY = WorldY;
+	GridSubBlockX = WorldX / L2Geodata::GEO_COORDS_IN_WORLD_COORDS;
+	GridSubBlockY = WorldY / L2Geodata::GEO_COORDS_IN_WORLD_COORDS;
 
 	GridWidth = Width / L2Geodata::GEO_COORDS_IN_WORLD_COORDS;
 	GridHeight = Height / L2Geodata::GEO_COORDS_IN_WORLD_COORDS;
@@ -501,8 +505,8 @@ void L2GeodataModelGenerator::FinalizeGenerationGrid(void)
 	free(GridUsageMap);
 	GridUsageMap = NULL;
 
-	GridWorldX = 0;
-	GridWorldY = 0;
+	GridSubBlockX = 0;
+	GridSubBlockY = 0;
 
 	GridWidth = 0;
 	GridHeight = 0;
@@ -737,53 +741,57 @@ void L2GeodataModelGenerator::FinalizeFloodFillStack(void)
 
 // Other
 
-void L2GeodataModelGenerator::GenerateNSWETexture(uint32_t Pixels[NSWE_TEX_HEIGHT][NSWE_TEX_WIDTH])
+void L2GeodataModelGenerator::GenerateNSWETexture(uint32_t* Pixels, int32_t Width, int32_t Height)
 {
-	memset(&Pixels[0][0], 0, NSWE_TEX_HEIGHT * NSWE_TEX_WIDTH * sizeof(uint32_t));
+	memset(Pixels, 0, Height * Width * sizeof(uint32_t));
 
-	static const uint32_t Green = 0xFF00AA00;
-	static const uint32_t Red = 0xFFFF0000;
+	if (Width < 3)
+		return;
 
-	for (int X = 0; X < NSWE_TEX_WIDTH; X++)
-		for (int Y = 0; Y < NSWE_TEX_HEIGHT; Y++) {
+	uint32_t Alpha = (0xFF * Width / NSWE_TEX_WIDTH) << 24;
+	uint32_t Green = 0x00AA00 | Alpha;
+	uint32_t Red = 0xFF0000 | Alpha;
 
-			int CellX = X % NSWE_TEX_WIDTH;
-			int CellY = Y % NSWE_TEX_WIDTH;
+	for (int X = 0; X < Width; X++)
+		for (int Y = 0; Y < Height; Y++) {
 
-			if (CellX == 0 || CellX == NSWE_TEX_WIDTH - 1 || CellY == 0 || CellY == NSWE_TEX_WIDTH - 1)
-				Pixels[Y][X] = Green;
+			int CellX = X % Width;
+			int CellY = Y % Width;
+
+			if (CellX == 0 || CellX == Width - 1 || CellY == 0 || CellY == Width - 1)
+				Pixels[Y * Width + X] = Green;
 		}
 
 	for (int NSWE = 0; NSWE <= 15; NSWE++) {
 
-		int Y = (15 - NSWE) * NSWE_TEX_WIDTH;
+		int Y = (15 - NSWE) * Width;
 
 		if (!TEST_NSWE(NSWE, L2Geodata::EAST)) {
 
-			int X = NSWE_TEX_WIDTH - 1;
+			int X = Width - 1;
 
-			for (int OffsetY = 1; OffsetY < NSWE_TEX_WIDTH - 1; OffsetY++)
-				Pixels[Y + OffsetY][X + 0] = Red;
+			for (int OffsetY = 1; OffsetY < Width - 1; OffsetY++)
+				Pixels[(Y + OffsetY) * Width + (X + 0)] = Red;
 		}
 
 		if (!TEST_NSWE(NSWE, L2Geodata::WEST)) {
 
 			int X = 0;
 
-			for (int OffsetY = 1; OffsetY < NSWE_TEX_WIDTH - 1; OffsetY++)
-				Pixels[Y + OffsetY][X + 0] = Red;
+			for (int OffsetY = 1; OffsetY < Width - 1; OffsetY++)
+				Pixels[(Y + OffsetY) * Width + (X + 0)] = Red;
 		}
 
 		if (!TEST_NSWE(NSWE, L2Geodata::NORTH)) {
 
-			for (int XOffset = 1; XOffset < NSWE_TEX_WIDTH - 1; XOffset++)
-				Pixels[Y + 0][0 + XOffset] = Red;
+			for (int XOffset = 1; XOffset < Width - 1; XOffset++)
+				Pixels[(Y + 0) * Width + (0 + XOffset)] = Red;
 		}
 
 		if (!TEST_NSWE(NSWE, L2Geodata::SOUTH)) {
 
-			for (int OffsetX = 1; OffsetX < NSWE_TEX_WIDTH - 1; OffsetX++)
-				Pixels[Y + NSWE_TEX_WIDTH - 1][0 + OffsetX] = Red;
+			for (int OffsetX = 1; OffsetX < Width - 1; OffsetX++)
+				Pixels[(Y + Width - 1) * Width + (0 + OffsetX)] = Red;
 		}
 	}
 }

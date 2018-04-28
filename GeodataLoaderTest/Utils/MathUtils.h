@@ -2,6 +2,7 @@
 
 inline POINT CrossProduct(POINT P, int S);
 inline POINT AddPoint(POINT P1, POINT P2);
+inline POINT SubtractPoint(POINT P1, POINT P2);
 inline POINT NegatePoint(POINT P);
 inline bool Equals(POINT P1, POINT P2);
 inline POINT ToZeroBasePoint(POINT P);

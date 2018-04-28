@@ -4,7 +4,7 @@ cbuffer ShaderVariables : register(b0)
     float4x4 FinalMatrix;
 };
 
-cbuffer LightOptions : register(b1)
+cbuffer LightOptions : register(b0)
 {
     float3 AmbientColor;
     float3 DiffuseColor;
@@ -89,7 +89,11 @@ float4 PS(PS_INPUT input) : SV_Target
         float4 NSWE_Color = NSWETexture.Sample(PointSampler, NSWE_Tex);
         
         if (NSWE_Color.a == 1.0f)
-            Color = NSWE_Color;
+             Color = NSWE_Color;
+            
+        // float t = NSWE_Color.a;
+        
+        // Color = float4((NSWE_Color.rgb * t) + ((1.0f - t) * Color.rgb), 1.0f);
     }
 
     return Color;

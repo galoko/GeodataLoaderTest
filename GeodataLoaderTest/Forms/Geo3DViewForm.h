@@ -4,6 +4,7 @@
 #define _USE_MATH_DEFINES
 #include <cmath>
 #include <array>
+#include <stack>
 
 #include <d3d11.h>
 #include <DirectXMath.h>
@@ -71,18 +72,8 @@ private:
 	LightOptionsStruct LightOptions;
 	ID3D11Buffer *LightOptionsRef;
 
-	ID3D11Texture2D *NSWETexture;
-	ID3D11ShaderResourceView *NSWEView;
-
-	static const int MAX_VERTICES = 700 * 1000 * 2;
-	GeodataVertex *VertexBuffer;
-	uint32_t VertexBufferSize;
-	ID3D11Buffer *SceneVertexBuffer;
-
-	static const int MAX_INDEXES = MAX_VERTICES * 2;
-	uint32_t *IndexBuffer;
-	uint32_t IndexBufferSize;
-	ID3D11Buffer *SceneIndexBuffer;
+	ID3D11Texture2D *NSWETexture, *WhitePixelTexture;
+	ID3D11ShaderResourceView *NSWEView, *WhitePixelView;
 
 	ID3D11SamplerState *PointSampler;
 	ID3D11SamplerState *SmoothSampler;
@@ -93,7 +84,51 @@ private:
 	// for input lag reduction
 	ID3D11Query *SyncQuery;
 
+	// Scene loader
+
+	static const int MAX_VERTICES = 700 * 1000 * 10;
+	static const int MAX_INDEXES = MAX_VERTICES * 2;
+	static const int BUFFERS_COUNT = 3;
+	static const int THREADS_COUNT = BUFFERS_COUNT * 2;
+
+	static const int REGION_SIZE = L2Geodata::GEO_REGION_SIZE / 4;
+
+	struct ModelBuffer {
+		GeodataVertex* VertexBuffer;
+		uint32_t* IndexBuffer;
+	};
+
+	stack<ModelBuffer> BufferPool;
+	PTP_POOL ExecutionPool;
+
+	struct ScheduledGeneration {
+
+		POINT Region;
+
+		bool IsModelScheduled, IsTextureScheduled, IsModelDone, IsTextureDone;
+	};
+
+	vector<ScheduledGeneration> ScheduledRegions;
+
 	// DirectX Scene definition
+
+	struct RegionModel {
+
+		ID3D11Buffer *VertexBuffer, *IndexBuffer;
+		uint32_t VertexCount, IndexCount;
+
+		ID3D11Texture2D *Texture;
+		ID3D11ShaderResourceView *TextureView;
+
+		bool IsModelDone, IsTextureDone;
+
+		void Free(void);
+	};
+
+	typedef RegionModel RegionModels[3][3];
+
+	POINT CenterRegion;
+	RegionModels Regions;
 
 	// GUI
 
@@ -105,32 +140,86 @@ private:
 	bool DrawTrianglesAsLines;
 	bool UseVSync = true;
 	bool IsInFocus;
+	bool NSWETextureEnabled;
 
 #define KEYS_COUNT 256
 	bool PressedKeys[KEYS_COUNT];
 
 	float MoveSpeed = 30.0f;
 
-	void BuildViewMatrix(void);
-	void BuildWorldMatrix(void);
-	void UpdateShaderVariables(void);
-
-	void CommitGeodataScene(void);
-
-	void GenerateNSWETexture(void);
-	void GenerateGeodataScene(int32_t WorldX, int32_t WorldY, uint32_t Width, uint32_t Height);
-
-	void PrintCurrentCoord(void);
-	bool HandleKeyPress(int Key);
+	// Window and Input events processing
 
 	void ProcessWindowState(void);
 	void ProcessMouseInput(LONG dx, LONG dy);
 	void ProcessKeyboardInput(double dt);
 
-	void DrawScene(void);
+	bool HandleKeyPress(int Key);
+	void PrintCurrentCoord(void);
+	void SwitchNSWETextureMode(void);
+
+	// Window Callback
 
 	LRESULT WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam);
 	static LRESULT CALLBACK WndProcCallback(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam);
+
+	// 3D Utils
+
+	void BuildViewMatrix(void);
+	void BuildWorldMatrix(void);
+	void UpdateShaderVariables(void);
+
+	void GenerateWhitePixelTexture(void);
+	void GenerateNSWETexture(void);
+
+	void DrawScene(void);
+
+	// Scene loader
+
+	struct ModelGenerationRequest {
+
+		// input
+		int RegionX;
+		int RegionY;
+		ModelBuffer Buffer;
+
+		// output
+		ID3D11Buffer *VertexBuffer, *IndexBuffer;
+		uint32_t VertexCount, IndexCount;
+	};
+
+	struct TextureLoadRequest {
+
+		// input
+		int RegionX;
+		int RegionY;
+		int LayerIndex;
+
+		// output
+		ID3D11Texture2D* Texture;
+		ID3D11ShaderResourceView *TextureView;
+	};
+
+	void TeleportTo(int WorldX, int WorldY, int WorldZ);
+	void ScheduleModelGeneration(int RegionX, int RegionY, ModelBuffer Buffer);
+	void ScheduleTextureLoad(int RegionX, int RegionY, int LayerIndex);
+	int GetGenerationIndexByRegion(int RegionX, int RegionY, bool AutoCreate);
+	void ScheduleRegionLoad(RegionModel* Region, int RegionX, int RegionY);
+	void ScheduleRegions(void);
+	void CheckRegions(bool ForceSchedule = false);
+	void CleanupGeneration(int GenerationIndex);
+
+	static const int WM_SCHEDULED_RESULT = WM_USER + 5;
+	static const int ID_MODEL_GENERATION = 1;
+	static const int ID_TEXTURE_LOAD     = 2;
+
+	void ModelGenerationWork(ModelGenerationRequest* Request);
+	void TextureLoadWork(TextureLoadRequest* Request);
+
+	void ReadModelGenerationResult(ModelGenerationRequest* Request);
+	void ReadTextureLoadResult(TextureLoadRequest* Request);
+
+	static VOID NTAPI ModelGenerationWorkCallback(PTP_CALLBACK_INSTANCE Instance, PVOID Context, PTP_WORK Work);
+	static VOID NTAPI TextureLoadWorkCallback(PTP_CALLBACK_INSTANCE Instance, PVOID Context, PTP_WORK Work);
 public:
 	void Init(unsigned int Width, unsigned int Height, WCHAR *WindowClass, WCHAR *Title, HINSTANCE hInstance);
 	void Show(void);

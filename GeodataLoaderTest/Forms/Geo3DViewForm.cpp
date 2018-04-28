@@ -5,14 +5,18 @@
 #include "FormsUtils.h"
 #include "TimeUtils.h"
 #include "MathUtils.h"
+#include "ColorUtils.h"
 
 #include <algorithm>
 #include <stdexcept>
 #include <iostream>
 #include <D3Dcompiler.h>
+#include "WICTextureLoader.h"
 
 #pragma comment (lib, "d3d11.lib")
 #pragma comment(lib, "d3dcompiler.lib")
+
+// Init
 
 void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowClass, WCHAR *Title,
 	HINSTANCE hInstance) {
@@ -48,7 +52,7 @@ void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowC
 	sd.SampleDesc.Quality = 0;
 	sd.Windowed = TRUE;
 
-	res = D3D11CreateDeviceAndSwapChain(NULL, D3D_DRIVER_TYPE_HARDWARE, 0, D3D11_CREATE_DEVICE_SINGLETHREADED | D3D11_CREATE_DEVICE_DEBUG, NULL, 0,
+	res = D3D11CreateDeviceAndSwapChain(NULL, D3D_DRIVER_TYPE_HARDWARE, 0, 0/* | D3D11_CREATE_DEVICE_DEBUG*/, NULL, 0,
 		D3D11_SDK_VERSION, &sd, &SwapChain, &DirectDevice, NULL, &DirectDeviceCtx);
 	if (FAILED(res))
 		throw new runtime_error("Couldn't create DX device and swap chain");
@@ -183,23 +187,6 @@ void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowC
 
 	DirectDeviceCtx->PSSetSamplers(1, 1, &PointSampler);
 
-	// creating buffers
-	D3D11_BUFFER_DESC SceneVertexBufferDesc = {};
-	SceneVertexBufferDesc.ByteWidth = sizeof(GeodataVertex) * MAX_VERTICES;
-	SceneVertexBufferDesc.Usage = D3D11_USAGE_DEFAULT;
-	SceneVertexBufferDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-	res = DirectDevice->CreateBuffer(&SceneVertexBufferDesc, NULL, &SceneVertexBuffer);
-	if (FAILED(res))
-		throw new runtime_error("Couldn't create vertex buffer");
-
-	D3D11_BUFFER_DESC SceneIndexBufferDesc = {};
-	SceneIndexBufferDesc.ByteWidth = sizeof(uint32_t) * MAX_INDEXES;
-	SceneIndexBufferDesc.Usage = D3D11_USAGE_DEFAULT;
-	SceneIndexBufferDesc.BindFlags = D3D11_BIND_INDEX_BUFFER;
-	res = DirectDevice->CreateBuffer(&SceneIndexBufferDesc, NULL, &SceneIndexBuffer);
-	if (FAILED(res))
-		throw new runtime_error("Couldn't create index buffer");
-
 	// create shader variables references
 
 	D3D11_BUFFER_DESC ShaderVariablesDesc = { };
@@ -220,7 +207,22 @@ void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowC
 	if (FAILED(res))
 		throw new runtime_error("Couldn't create shader light options ref");
 
-	DirectDeviceCtx->PSSetConstantBuffers(1, 1, &LightOptionsRef);
+	DirectDeviceCtx->PSSetConstantBuffers(0, 1, &LightOptionsRef);
+
+	// Scene loader
+	
+	for (int BufferNum = 1; BufferNum <= BUFFERS_COUNT; BufferNum++) {
+
+		ModelBuffer Buffer = { };
+		Buffer.VertexBuffer = (GeodataVertex*)malloc(MAX_VERTICES * sizeof(GeodataVertex));
+		Buffer.IndexBuffer = (uint32_t*)malloc(MAX_INDEXES * sizeof(uint32_t));
+
+		BufferPool.push(Buffer);
+	}
+
+	ExecutionPool = CreateThreadpool(NULL);
+	SetThreadpoolThreadMinimum(ExecutionPool, THREADS_COUNT);
+	SetThreadpoolThreadMaximum(ExecutionPool, THREADS_COUNT);
 
 	// setup frame
 	DirectDeviceCtx->OMSetRenderTargets(1, &RenderTargetView, DepthStencilView);
@@ -230,12 +232,6 @@ void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowC
 
 	DirectDeviceCtx->VSSetShader(VertexShader, 0, 0);
 	DirectDeviceCtx->PSSetShader(PixelShader, 0, 0);
-
-	UINT stride = sizeof(GeodataVertex);
-	UINT offset = 0;
-	DirectDeviceCtx->IASetVertexBuffers(0, 1, &SceneVertexBuffer, &stride, &offset);
-
-	DirectDeviceCtx->IASetIndexBuffer(SceneIndexBuffer, DXGI_FORMAT_R32_UINT, 0);
 
 	// register raw input
 
@@ -249,27 +245,15 @@ void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowC
 	if (!RegisterRawInputDevices(Rid, 1, sizeof(Rid[0])))
 		throw new runtime_error("Couldn't register raw devices");
 
-	// init buffers
-
-	VertexBuffer = new GeodataVertex[MAX_VERTICES];
-	IndexBuffer = new uint32_t[MAX_INDEXES];
-
 	// setup camera
-
-	CameraAngle.y = 3;
-	CameraAngle.x = 0;
-
-	CameraPosition.z = -269.5f;
 
 	Up = XMVectorSet(0, 0, 1, 1);
 
 	// setup matrices
 
-	ProjectionMatrix = XMMatrixPerspectiveFovLH(0.5f * (float)M_PI, (float)Width / (float)Height, 0.1f, 4500.0f);
+	ProjectionMatrix = XMMatrixPerspectiveFovLH(0.5f * (float)M_PI, (float)Width / (float)Height, 0.1f / (float)L2GeodataModelGenerator::InvScaleWorld, 4500.0f / (float)L2GeodataModelGenerator::InvScaleWorld);
 
-	BuildViewMatrix();
 	BuildWorldMatrix();
-	UpdateShaderVariables();
 
 	// setup light
 
@@ -282,161 +266,18 @@ void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowC
 
 	// load resources
 
+	GenerateWhitePixelTexture();
 	GenerateNSWETexture();
 
-	// scene init
+	// TODO save camera and position to a file
+	CameraAngle.y = 3;
+	CameraAngle.x = 0;
 
-	GenerateGeodataScene(13100, 140572, 16 * 512 * 1, 16 * 512 * 1);
-	// GenerateGeodataScene(79625, 143498, 16 * 500, 16 * 500);
-	// GenerateGeodataScene(109780, 11200, 16 * 800, 16 * 800);
-	// GenerateGeodataScene(112964, 39885, 16 * 800, 16 * 800);
-	// GenerateGeodataScene(109780 + 16 * 202, 11200 + 16 * 156, 16 * 1, 16 * 2);
-	// GenerateGeodataScene(109780 + 16 * 385, 11200 + 16 * 149, 16 * 2, 16 * 1);
-	// GenerateGeodataScene(13100 + 16 * 253, 140572 + 16 * 267, 16 * 2, 16 * 1);
-	// GenerateGeodataScene(13100 + 16 * 79, 140572 + 16 * 120, 16 * 2, 16 * 2);
-	// GenerateGeodataScene(13100 + 16 * 1500, 140572 + 16 * 1500, 16 * 2500, 16 * 2500);
-	// GenerateGeodataScene(13100 + 16 * 137, 140572 + 16 * 73, 16 * 20, 16 * 10);
-	// GenerateGeodataScene(13100, 140572, 16 * 4, 16 * 4);
-	// GenerateGeodataScene(13100 + 15 * 16 - 3 * 16, 140572 + 272 * 16 - 3 * 16, 2 * 16, 2 * 16);
+	// initial position
+	TeleportTo(13100, 140572, -2695);
 }
 
-void Geo3DViewForm::PrintCurrentCoord(void)
-{
-	POINT Coord = { (LONG)floor(CameraPosition.x), (LONG)floor(CameraPosition.y) };
-
-	cout << Coord.x << ", " << Coord.y << " | " << CameraPosition.z << endl;
-}
-
-bool Geo3DViewForm::HandleKeyPress(int Key)
-{
-	switch (Key) {
-	case  VK_ESCAPE:
-		PostQuitMessage(0);
-		break;
-	case 'U':
-		PrintCurrentCoord();
-		break;
-	case 'V':
-		UseVSync = !UseVSync;
-		break;
-	default:
-		return false;
-	}
-
-	return true;
-}
-
-void Geo3DViewForm::GenerateNSWETexture(void)
-{
-	HRESULT res;
-
-	uint32_t Pixels[L2GeodataModelGenerator::NSWE_TEX_HEIGHT][L2GeodataModelGenerator::NSWE_TEX_WIDTH];
-
-	L2GeodataModelGenerator::GenerateNSWETexture(Pixels);
-
-	D3D11_SUBRESOURCE_DATA InitialData = {};
-	InitialData.pSysMem = &Pixels[0][0];
-	InitialData.SysMemPitch = sizeof(Pixels[0]);
-
-	D3D11_TEXTURE2D_DESC TextureDesc = {};
-	TextureDesc.Width = L2GeodataModelGenerator::NSWE_TEX_WIDTH;
-	TextureDesc.Height = L2GeodataModelGenerator::NSWE_TEX_HEIGHT;
-	TextureDesc.MipLevels = 1;
-	TextureDesc.ArraySize = 1;
-	TextureDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-	TextureDesc.SampleDesc.Count = 1;
-	TextureDesc.SampleDesc.Quality = 0;
-	TextureDesc.Usage = D3D11_USAGE_DEFAULT;
-	TextureDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-	TextureDesc.CPUAccessFlags = 0;
-
-	res = DirectDevice->CreateTexture2D(&TextureDesc, &InitialData, &NSWETexture);
-	if (FAILED(res))
-		throw new runtime_error("Couldn't create NSWE texture");
-
-	res = DirectDevice->CreateShaderResourceView(NSWETexture, NULL, &NSWEView);
-	if (FAILED(res))
-		throw new runtime_error("Couldn't create NSWE texture");
-
-	DirectDeviceCtx->PSSetShaderResources(1, 1, &NSWEView);
-
-	// DumpBMP32((uint8_t*)&Pixels[0][0], NSWE_TEX_WIDTH, NSWE_TEX_HEIGHT, "H:\\test.bmp");
-}
-
-void Geo3DViewForm::BuildViewMatrix(void)
-{
-	float x = sinf(CameraAngle.y) * sinf(CameraAngle.x);
-	float y = sinf(CameraAngle.y) * cosf(CameraAngle.x);
-	float z = cosf(CameraAngle.y);
-
-	TargetVector = XMVectorSet(x, y, z, 1);
-
-	XMVECTOR Position = XMVectorSet(CameraPosition.x, CameraPosition.y, CameraPosition.z, 1);
-	XMVECTOR Target = Position + TargetVector;
-
-	ViewMatrix = XMMatrixLookAtLH(Position, Target, Up);
-}
-
-void Geo3DViewForm::BuildWorldMatrix(void)
-{
-	WorldMatrix = XMMatrixIdentity();
-}
-
-void Geo3DViewForm::UpdateShaderVariables(void)
-{
-	XMMATRIX InvWorldMatrix = XMMatrixTranspose(WorldMatrix);
-	XMStoreFloat4x4(&ShaderMatrices.WorldMatrix, InvWorldMatrix);
-
-	XMMATRIX FinalMatrix = XMMatrixTranspose(WorldMatrix * ViewMatrix * ProjectionMatrix);
-	XMStoreFloat4x4(&ShaderMatrices.FinalMatrix, FinalMatrix);
-
-	DirectDeviceCtx->UpdateSubresource(ShaderMatricesRef, 0, NULL, &ShaderMatrices, 0, 0);
-}
-
-size_t GetHash(uint32_t *Data, int Count) {
-
-	hash<uint32_t> Hasher;
-
-	size_t Result = 0;
-
-	for (int Index = 0; Index < Count; Index++)
-		Result = Result * 31 + Hasher(Data[Index]);
-
-	return Result;
-}
-
-void Geo3DViewForm::CommitGeodataScene(void) {
-
-	D3D11_BOX Region = { };
-	Region.bottom = 1;
-	Region.back = 1;
-	
-	Region.right = VertexBufferSize * sizeof(*VertexBuffer);
-	DirectDeviceCtx->UpdateSubresource(SceneVertexBuffer, 0, &Region, VertexBuffer, 0, 0);
-
-	Region.right = IndexBufferSize * sizeof(*IndexBuffer);
-	DirectDeviceCtx->UpdateSubresource(SceneIndexBuffer, 0, &Region, IndexBuffer, 0, 0);
-}
-
-void Geo3DViewForm::GenerateGeodataScene(int32_t WorldX, int32_t WorldY, uint32_t Width, uint32_t Height)
-{
-	LONGLONG StartTime = GetTime();
-
-	L2GeodataModelGenerator Generator;
-
-	VertexBufferSize = MAX_VERTICES;
-	IndexBufferSize = MAX_INDEXES;
-	Generator.GenerateGeodataScene(WorldX, WorldY, Width, Height, VertexBuffer, VertexBufferSize, IndexBuffer, IndexBufferSize);
-
-	CommitGeodataScene();
-
-	LONGLONG EndTime = GetTime();
-
-	cout << VertexBufferSize << " verticies was used" << endl;
-	cout << IndexBufferSize << " indices was used" << endl;
-	cout << VertexBufferSize * sizeof(*VertexBuffer) + IndexBufferSize * sizeof(*IndexBuffer) << " bytes was used" << endl;
-	cout << "Scene generated for " << TimeToMs(EndTime - StartTime) << " ms" << endl;
-}
+// Window and Input events processing
 
 void Geo3DViewForm::ProcessWindowState(void)
 {
@@ -472,11 +313,89 @@ void Geo3DViewForm::ProcessMouseInput(LONG dx, LONG dy) {
 	CameraAngle.x -= (float)(long)CameraAngle.x;
 	CameraAngle.x *= (float)M_PI * 2.0f;
 
-	CameraAngle.y = min(max(0.01f, CameraAngle.y), 3.14f);
+	CameraAngle.y = min(max(0.1f, CameraAngle.y), 3.13f);
+
+	// cout << CameraAngle.x << " " << CameraAngle.y << endl;
 
 	BuildViewMatrix();
 	UpdateShaderVariables();
 }
+
+void Geo3DViewForm::ProcessKeyboardInput(double dt)
+{
+	XMVECTOR SideVector = XMVector3Normalize(XMVector3Cross(-TargetVector, Up));
+	XMVECTOR ForwardVector = XMVector3Cross(SideVector, Up);
+
+	XMVECTOR Displacement = {};
+
+	if (PressedKeys['D'])
+		Displacement += SideVector;
+	if (PressedKeys['A'])
+		Displacement -= SideVector;
+	if (PressedKeys['W'])
+		Displacement += ForwardVector;
+	if (PressedKeys['S'])
+		Displacement -= ForwardVector;
+	if (PressedKeys[VK_SHIFT])
+		Displacement -= Up;
+	if (PressedKeys[VK_SPACE] || PressedKeys[VK_CONTROL])
+		Displacement += Up;
+
+	Displacement = XMVector3Normalize(Displacement) * (float)(MoveSpeed / (float)L2GeodataModelGenerator::InvScaleWorld * dt);
+
+	if (XMVector3LengthSq(Displacement).m128_f32[0] <= 0.0)
+		return;
+
+	XMVECTOR Position = XMLoadFloat3(&CameraPosition);
+	Position += Displacement;
+	XMStoreFloat3(&CameraPosition, Position);
+
+	BuildViewMatrix();
+	UpdateShaderVariables();
+
+	CheckRegions(false);
+}
+
+void Geo3DViewForm::Show(void) {
+
+	ShowWindow(WindowHandle, SW_SHOW);
+}
+
+bool Geo3DViewForm::HandleKeyPress(int Key)
+{
+	switch (Key) {
+	case  VK_ESCAPE:
+		PostQuitMessage(0);
+		break;
+	case 'U':
+		PrintCurrentCoord();
+		break;
+	case 'K':
+		SwitchNSWETextureMode();
+		break;
+	case 'V':
+		UseVSync = !UseVSync;
+		break;
+	default:
+		return false;
+	}
+
+	return true;
+}
+
+void Geo3DViewForm::PrintCurrentCoord(void)
+{
+	POINT Coord = { (LONG)floor(CameraPosition.x * (float)L2Geodata::GEO_COORDS_IN_WORLD_COORDS * (float)L2GeodataModelGenerator::InvScaleWorld), (LONG)floor(CameraPosition.y * (float)L2Geodata::GEO_COORDS_IN_WORLD_COORDS * (float)L2GeodataModelGenerator::InvScaleWorld) };
+
+	cout << Coord.x << ", " << Coord.y << " | " << CameraPosition.z << endl;
+}
+
+void Geo3DViewForm::SwitchNSWETextureMode(void)
+{
+	NSWETextureEnabled = !NSWETextureEnabled;
+}
+
+// Window Callback
 
 LRESULT Geo3DViewForm::WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
 {
@@ -531,6 +450,26 @@ LRESULT Geo3DViewForm::WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam
 		MoveSpeed = max(1.0f, MoveSpeed * Mul);
 		break;
 	}
+	case WM_SCHEDULED_RESULT: {
+
+		int ID = (int)wParam;
+
+		switch (ID) {
+		case ID_MODEL_GENERATION: {
+			ReadModelGenerationResult((ModelGenerationRequest*)lParam);
+			break;
+		}
+		case ID_TEXTURE_LOAD: {
+			ReadTextureLoadResult((TextureLoadRequest*)lParam);
+			break;
+		}
+		default:
+			cout << "Unknown scheduled result ID: " << ID << endl;
+			break;
+		}
+
+		break;
+	}
 	case WM_DESTROY:
 		PostQuitMessage(0);
 		break;
@@ -545,43 +484,118 @@ LRESULT Geo3DViewForm::WndProcCallback(HWND hWnd, UINT Msg, WPARAM wParam, LPARA
 	return Geo3DViewForm::GetInstance().WndProc(hWnd, Msg, wParam, lParam);
 }
 
-void Geo3DViewForm::Show(void) {
+// 3D Utils
 
-	ShowWindow(WindowHandle, SW_SHOW);
-	// UpdateWindow(WindowHandle);
+void Geo3DViewForm::BuildViewMatrix(void)
+{
+	float x = sinf(CameraAngle.y) * sinf(CameraAngle.x);
+	float y = sinf(CameraAngle.y) * cosf(CameraAngle.x);
+	float z = cosf(CameraAngle.y);
+
+	TargetVector = XMVectorSet(x, y, z, 1);
+
+	XMVECTOR Position = XMVectorSet(CameraPosition.x, CameraPosition.y, CameraPosition.z, 1);
+	XMVECTOR Target = Position + TargetVector;
+
+	ViewMatrix = XMMatrixLookAtLH(Position, Target, Up);
 }
 
-void Geo3DViewForm::ProcessKeyboardInput(double dt)
+void Geo3DViewForm::BuildWorldMatrix(void)
 {
-	XMVECTOR SideVector = XMVector3Normalize(XMVector3Cross(-TargetVector, Up));
-	XMVECTOR ForwardVector = XMVector3Cross(SideVector, Up);
+	WorldMatrix = XMMatrixIdentity();
+}
 
-	XMVECTOR Displacement = {};
+void Geo3DViewForm::UpdateShaderVariables(void)
+{
+	XMMATRIX InvWorldMatrix = XMMatrixTranspose(WorldMatrix);
+	XMStoreFloat4x4(&ShaderMatrices.WorldMatrix, InvWorldMatrix);
 
-	if (PressedKeys['D'])
-		Displacement += SideVector;
-	if (PressedKeys['A'])
-		Displacement -= SideVector;
-	if (PressedKeys['W'])
-		Displacement += ForwardVector;
-	if (PressedKeys['S'])
-		Displacement -= ForwardVector;
-	if (PressedKeys[VK_SHIFT])
-		Displacement -= Up;
-	if (PressedKeys[VK_SPACE] || PressedKeys[VK_CONTROL])
-		Displacement += Up;
+	XMMATRIX FinalMatrix = XMMatrixTranspose(WorldMatrix * ViewMatrix * ProjectionMatrix);
+	XMStoreFloat4x4(&ShaderMatrices.FinalMatrix, FinalMatrix);
 
-	Displacement = XMVector3Normalize(Displacement) * (float)(MoveSpeed * dt);
+	DirectDeviceCtx->UpdateSubresource(ShaderMatricesRef, 0, NULL, &ShaderMatrices, 0, 0);
+}
 
-	if (XMVector3LengthSq(Displacement).m128_f32[0] <= 0.0)
-		return;
+void Geo3DViewForm::GenerateWhitePixelTexture(void)
+{
+	HRESULT res;
 
-	XMVECTOR Position = XMLoadFloat3(&CameraPosition);
-	Position += Displacement;
-	XMStoreFloat3(&CameraPosition, Position);
+	D3D11_TEXTURE2D_DESC TextureDesc = {};
+	TextureDesc.Width = 1;
+	TextureDesc.Height = 1;
+	TextureDesc.MipLevels = 1;
+	TextureDesc.ArraySize = 1;
+	TextureDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+	TextureDesc.SampleDesc.Count = 1;
+	TextureDesc.SampleDesc.Quality = 0;
+	TextureDesc.Usage = D3D11_USAGE_DEFAULT;
+	TextureDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+	TextureDesc.CPUAccessFlags = 0;
 
-	BuildViewMatrix();
-	UpdateShaderVariables();
+	uint32_t WhitePixel = 0x00FFFFFF;
+
+	D3D11_SUBRESOURCE_DATA InitialData = { };
+	InitialData.pSysMem = &WhitePixel;
+	InitialData.SysMemPitch = sizeof(WhitePixel);
+
+	res = DirectDevice->CreateTexture2D(&TextureDesc, &InitialData, &WhitePixelTexture);
+	if (FAILED(res))
+		throw new runtime_error("Couldn't create white pixel texture");
+
+	res = DirectDevice->CreateShaderResourceView(WhitePixelTexture, NULL, &WhitePixelView);
+	if (FAILED(res))
+		throw new runtime_error("Couldn't create white pixel shader view");
+}
+
+void Geo3DViewForm::GenerateNSWETexture(void)
+{
+	static const int MipMapCount = 1;
+
+	HRESULT res;
+
+	D3D11_TEXTURE2D_DESC TextureDesc = {};
+	TextureDesc.Width = L2GeodataModelGenerator::NSWE_TEX_WIDTH;
+	TextureDesc.Height = L2GeodataModelGenerator::NSWE_TEX_HEIGHT;
+	TextureDesc.MipLevels = MipMapCount;
+	TextureDesc.ArraySize = 1;
+	TextureDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+	TextureDesc.SampleDesc.Count = 1;
+	TextureDesc.SampleDesc.Quality = 0;
+	TextureDesc.Usage = D3D11_USAGE_DEFAULT;
+	TextureDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+	TextureDesc.CPUAccessFlags = 0;
+
+	res = DirectDevice->CreateTexture2D(&TextureDesc, NULL, &NSWETexture);
+	if (FAILED(res))
+		throw new runtime_error("Couldn't create NSWE texture");
+
+	res = DirectDevice->CreateShaderResourceView(NSWETexture, NULL, &NSWEView);
+	if (FAILED(res))
+		throw new runtime_error("Couldn't create NSWE shader view");
+
+	int Width = L2GeodataModelGenerator::NSWE_TEX_WIDTH;
+	int Height = L2GeodataModelGenerator::NSWE_TEX_HEIGHT;
+
+	for (int MipMapIndex = 0; MipMapIndex < MipMapCount; MipMapIndex++) {
+
+		uint32_t* Pixels = (uint32_t*) malloc(Width * Height * sizeof(uint32_t));
+
+		if (MipMapCount < 2 || MipMapIndex < MipMapCount - 1)
+			L2GeodataModelGenerator::GenerateNSWETexture(Pixels, Width, Height);
+		else
+			memset(Pixels, 0, Width * Height * sizeof(uint32_t));
+
+		// DumpBMP32((uint8_t*)Pixels, Width, Height, ("H:\\test_" + to_string(MipMapIndex) + ".bmp").c_str());
+
+		DirectDeviceCtx->UpdateSubresource(NSWETexture, MipMapIndex, NULL, Pixels, Width * sizeof(uint32_t), 0);
+
+		free(Pixels);
+
+		Width = Width / 2;
+		Height = Height / 2;
+	}
+
+	DirectDeviceCtx->PSSetShaderResources(1, 1, &NSWEView);
 }
 
 void Geo3DViewForm::WaitForNextFrame(void)
@@ -617,9 +631,35 @@ void Geo3DViewForm::DrawScene(void)
 	DirectDeviceCtx->ClearRenderTargetView(RenderTargetView, color);
 	DirectDeviceCtx->ClearDepthStencilView(DepthStencilView, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 
-	DirectDeviceCtx->DrawIndexed(IndexBufferSize, 0, 0);
+	if (NSWETextureEnabled)
+		DirectDeviceCtx->PSSetShaderResources(1, 1, &NSWEView);
+	else
+		DirectDeviceCtx->PSSetShaderResources(1, 1, &WhitePixelView);
 
-	if (SyncQuery != NULL) 
+	for (int X = -1; X <= 1; X++)
+		for (int Y = -1; Y <= 1; Y++) {
+
+			RegionModel* Model = &Regions[1 + X][1 + Y];
+
+			if (Model->IsModelDone && Model->IndexCount > 0) {
+
+				if (!NSWETextureEnabled && Model->TextureView != NULL)
+					DirectDeviceCtx->PSSetShaderResources(0, 1, &Model->TextureView);
+				else
+					DirectDeviceCtx->PSSetShaderResources(0, 1, &WhitePixelView);
+
+				// TODO
+				UINT stride = sizeof(GeodataVertex);
+				UINT offset = 0;
+				DirectDeviceCtx->IASetVertexBuffers(0, 1, &Model->VertexBuffer, &stride, &offset);
+
+				DirectDeviceCtx->IASetIndexBuffer(Model->IndexBuffer, DXGI_FORMAT_R32_UINT, 0);
+
+				DirectDeviceCtx->DrawIndexed(Model->IndexCount, 0, 0);
+			}
+		}
+
+	if (SyncQuery != NULL)
 		DirectDeviceCtx->End(SyncQuery);
 
 	// switch the back buffer and the front buffer
@@ -631,4 +671,397 @@ void Geo3DViewForm::Tick(double dt) {
 	ProcessWindowState();
 	ProcessKeyboardInput(dt);
 	DrawScene();
+}
+
+// Scene loader
+
+void Geo3DViewForm::TeleportTo(int WorldX, int WorldY, int WorldZ)
+{
+	CameraPosition.x = ((float)(WorldX / L2Geodata::GEO_COORDS_IN_WORLD_COORDS) + 0.5f) / (float)L2GeodataModelGenerator::InvScaleWorld;
+	CameraPosition.y = ((float)(WorldY / L2Geodata::GEO_COORDS_IN_WORLD_COORDS) + 0.5f) / (float)L2GeodataModelGenerator::InvScaleWorld;
+	CameraPosition.z = (float)WorldZ  / (float)L2GeodataModelGenerator::InvScaleZ;
+
+	BuildViewMatrix();
+	UpdateShaderVariables();
+
+	CheckRegions(true);
+}
+
+void Geo3DViewForm::ScheduleModelGeneration(int RegionX, int RegionY, ModelBuffer Buffer)
+{
+	cout << RegionX << " " << RegionY << " model generation scheduled" << endl;
+
+	ModelGenerationRequest* Request = new ModelGenerationRequest();
+	Request->RegionX = RegionX;
+	Request->RegionY = RegionY;
+	Request->Buffer = Buffer;
+
+	PTP_WORK Work = CreateThreadpoolWork(ModelGenerationWorkCallback, (PVOID)Request, NULL);
+	if (Work == NULL)
+		throw new runtime_error("Couldn't create model generation work");
+
+	SubmitThreadpoolWork(Work);
+	CloseThreadpoolWork(Work);
+}
+
+void Geo3DViewForm::ScheduleTextureLoad(int RegionX, int RegionY, int LayerIndex)
+{
+	TextureLoadRequest* Request = new TextureLoadRequest();
+	Request->RegionX = RegionX;
+	Request->RegionY = RegionY;
+	Request->LayerIndex = LayerIndex;
+
+	PTP_WORK Work = CreateThreadpoolWork(TextureLoadWorkCallback, (PVOID)Request, NULL);
+	if (Work == NULL)
+		throw new runtime_error("Couldn't create texture load work");
+
+	SubmitThreadpoolWork(Work);
+	CloseThreadpoolWork(Work);
+}
+
+int Geo3DViewForm::GetGenerationIndexByRegion(int RegionX, int RegionY, bool AutoCreate)
+{
+	POINT Region = { RegionX, RegionY };
+
+	for (int Index = 0; Index < ScheduledRegions.size(); Index++) {
+
+		ScheduledGeneration* Generation = &ScheduledRegions[Index];
+
+		if (Equals(Generation->Region, Region))
+			return Index;
+	}
+
+	if (!AutoCreate)
+		return -1;
+
+	ScheduledGeneration NewGeneration = { };
+	NewGeneration.Region = { RegionX, RegionY };
+	ScheduledRegions.push_back(NewGeneration);
+
+	return (int)ScheduledRegions.size() - 1;
+}
+
+void Geo3DViewForm::ScheduleRegionLoad(RegionModel* Region, int RegionX, int RegionY)
+{
+	if (Region->IsModelDone && Region->IsTextureDone)
+		return;
+
+	int GenerationIndex = GetGenerationIndexByRegion(RegionX, RegionY, true);
+	ScheduledGeneration* Generation = &ScheduledRegions[GenerationIndex];
+
+	if (!Region->IsModelDone && !Generation->IsModelScheduled && !BufferPool.empty()) {
+
+		ModelBuffer Buffer = BufferPool.top();
+		BufferPool.pop();
+		
+		ScheduleModelGeneration(RegionX, RegionY, Buffer);
+
+		Generation->IsModelDone = false;
+		Generation->IsModelScheduled = true;
+	}
+
+	if (!Region->IsTextureDone && !Generation->IsTextureScheduled) {
+
+		ScheduleTextureLoad(RegionX, RegionY, 0);
+
+		Generation->IsTextureDone = false;
+		Generation->IsTextureScheduled = true;
+	}
+}
+
+void Geo3DViewForm::ScheduleRegions(void)
+{
+	const static POINT NeighborOrder[9] = {
+		{ 0,  0 },
+		{ 0,  1 }, {  0, -1 },
+		{ 1,  0 }, { -1,  0 },
+		{ 1,  1 }, { -1, -1 },
+		{ 1, -1 }, { -1,  1 }
+	};
+
+	for (POINT Point : NeighborOrder) {
+
+		RegionModel* Region = &Regions[1 + Point.x][1 + Point.y];
+		ScheduleRegionLoad(Region, CenterRegion.x + Point.x, CenterRegion.y + Point.y);
+	}
+}
+
+void Geo3DViewForm::CheckRegions(bool ForceSchedule)
+{
+	POINT CurrentRegion = { (int)floor(CameraPosition.x * (float)L2GeodataModelGenerator::InvScaleWorld / (float)REGION_SIZE), (int)floor(CameraPosition.y * (float)L2GeodataModelGenerator::InvScaleWorld / (float)REGION_SIZE) };
+	POINT Direction = SubtractPoint(CurrentRegion, CenterRegion);
+
+	if (Direction.x != 0 || Direction.y != 0) {
+
+		cout << "Moved in " << Direction.x << " " << Direction.y << endl;
+
+		RegionModels NewRegions = { };
+
+		for (int SrcX = -1; SrcX <= 1; SrcX++)
+			for (int SrcY = -1; SrcY <= 1; SrcY++) {
+
+				POINT Src = { SrcX, SrcY };
+				POINT Dest = SubtractPoint(Src, Direction);
+
+				RegionModel* SrcRegion = &Regions[1 + Src.x][1 + Src.y];
+				RegionModel* DestRegion = &NewRegions[1 + Dest.x][1 + Dest.y];
+
+				// Dest for this region is out of bound
+				if (Dest.x >= -1 && Dest.x <= 1 && Dest.y >= -1 && Dest.y <= 1)
+					*DestRegion = *SrcRegion;
+				else
+					SrcRegion->Free();
+			}
+
+		memcpy(&Regions[0][0], &NewRegions[0][0], sizeof(Regions));
+
+		CenterRegion = CurrentRegion;
+	}
+	else
+	if (!ForceSchedule)
+		return;
+
+	ScheduleRegions();
+}
+
+void Geo3DViewForm::CleanupGeneration(int GenerationIndex)
+{
+	ScheduledGeneration* Generation = &ScheduledRegions[GenerationIndex];
+
+	if (Generation->IsModelDone && Generation->IsTextureDone)
+		ScheduledRegions.erase(ScheduledRegions.begin() + GenerationIndex);
+}
+
+void Geo3DViewForm::ModelGenerationWork(ModelGenerationRequest* Request)
+{
+	L2GeodataModelGenerator Generator;
+
+	static const int REGION_TO_WORLD = REGION_SIZE * L2Geodata::GEO_COORDS_IN_WORLD_COORDS;
+
+	int32_t WorldX = Request->RegionX * REGION_TO_WORLD;
+	int32_t WorldY = Request->RegionY * REGION_TO_WORLD;
+
+	Request->VertexCount = MAX_VERTICES;
+	Request->IndexCount = MAX_INDEXES;
+
+	Generator.GenerateGeodataScene(WorldX, WorldY, 1 * REGION_TO_WORLD, 1 * REGION_TO_WORLD, 
+		Request->Buffer.VertexBuffer, Request->VertexCount, Request->Buffer.IndexBuffer, Request->IndexCount);
+
+	if (Request->VertexCount > 0) {
+
+		HRESULT res;
+
+		D3D11_SUBRESOURCE_DATA InitialData = {};
+
+		// creating buffers
+		D3D11_BUFFER_DESC VertexBufferDesc = {};
+		VertexBufferDesc.ByteWidth = sizeof(GeodataVertex) * Request->VertexCount;
+		VertexBufferDesc.Usage = D3D11_USAGE_DEFAULT;
+		VertexBufferDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+		InitialData.pSysMem = Request->Buffer.VertexBuffer;
+		res = DirectDevice->CreateBuffer(&VertexBufferDesc, &InitialData, &Request->VertexBuffer);
+		if (FAILED(res))
+			throw new runtime_error("Couldn't create vertex buffer");
+
+		D3D11_BUFFER_DESC IndexBufferDesc = {};
+		IndexBufferDesc.ByteWidth = sizeof(uint32_t) * Request->IndexCount;
+		IndexBufferDesc.Usage = D3D11_USAGE_DEFAULT;
+		IndexBufferDesc.BindFlags = D3D11_BIND_INDEX_BUFFER;
+		InitialData.pSysMem = Request->Buffer.IndexBuffer;
+		res = DirectDevice->CreateBuffer(&IndexBufferDesc, &InitialData, &Request->IndexBuffer);
+		if (FAILED(res))
+			throw new runtime_error("Couldn't create index buffer");
+	}
+	else {
+		Request->VertexBuffer = NULL;
+		Request->IndexBuffer = NULL;
+	}
+
+	PostMessage(WindowHandle, WM_SCHEDULED_RESULT, ID_MODEL_GENERATION, (LPARAM)Request);
+}
+
+void Geo3DViewForm::TextureLoadWork(TextureLoadRequest* Request)
+{
+	int32_t WorldX = (Request->RegionX * REGION_SIZE) * L2Geodata::GEO_COORDS_IN_WORLD_COORDS;
+	int32_t WorldY = (Request->RegionY * REGION_SIZE) * L2Geodata::GEO_COORDS_IN_WORLD_COORDS;
+
+	uint32_t GeoX, GeoY;
+
+	L2Geodata::WorldToGeo(WorldX, WorldY, &GeoX, &GeoY);
+
+	int RegionX = L2Geodata::GEO_X_FIRST + GeoX / L2Geodata::GEO_REGION_SIZE;
+	int RegionY = L2Geodata::GEO_Y_FIRST + GeoY / L2Geodata::GEO_REGION_SIZE;
+
+	int SubRegionX = (GeoX * 4 / L2Geodata::GEO_REGION_SIZE) % 4;
+	int SubRegionY = (GeoY * 4 / L2Geodata::GEO_REGION_SIZE) % 4;
+
+	wstring FileName =
+		L"H:\\MAPS\\" + to_wstring(RegionX) + L"_" + to_wstring(RegionY) + L"_" + to_wstring(SubRegionX) + L"_" + to_wstring(SubRegionY) +
+		(Request->LayerIndex > 0 ? to_wstring(Request->LayerIndex) : L"") + L".jpg";
+
+	CoInitialize(NULL);
+
+	HRESULT res;
+
+	res = CreateWICTextureFromFile(DirectDevice, FileName.c_str(), (ID3D11Resource**) &Request->Texture, &Request->TextureView, 2048);
+	if (FAILED(res)) {
+
+		if (Request->Texture != NULL) {
+			Request->Texture->Release();
+			Request->Texture = NULL;
+		}
+
+		if (Request->TextureView != NULL) {
+			Request->TextureView->Release();
+			Request->TextureView = NULL;
+		}
+	}
+	else {
+
+		D3D11_TEXTURE2D_DESC Desc;
+
+		Request->Texture->GetDesc(&Desc);
+
+		wcout << "loaded texture " << FileName << " " << Desc.Width << " " << Desc.Height << endl;
+	}
+
+	PostMessage(WindowHandle, WM_SCHEDULED_RESULT, ID_TEXTURE_LOAD, (LPARAM)Request);
+}
+
+void Geo3DViewForm::ReadModelGenerationResult(ModelGenerationRequest* Request)
+{
+	int GenerationIndex = GetGenerationIndexByRegion(Request->RegionX, Request->RegionY, false);
+	if (GenerationIndex == -1)
+		throw new runtime_error("Model generation result came while there was no scheduled generation");
+
+	ScheduledGeneration* Generation = &ScheduledRegions[GenerationIndex];
+
+	if (!Generation->IsModelScheduled)
+		throw new runtime_error("Model generation result came while there was no scheduled generation, but generation instance is present"); 
+	
+	if (Generation->IsModelDone)
+		throw new runtime_error("Model generation result came while there was model done already");
+
+	Generation->IsModelScheduled = false;
+	Generation->IsModelDone = true;
+
+	// trying to find corresponding active region
+
+	POINT Region = SubtractPoint(Generation->Region, CenterRegion);
+	if (Region.x >= -1 && Region.x <= 1 && Region.y >= -1 && Region.y <= 1) {
+
+		RegionModel* Model = &Regions[1 + Region.x][1 + Region.y];
+
+		if (Model->IsModelDone)
+			throw new runtime_error("Active region already have a model, wasteful generation detected");
+
+		Model->VertexCount = Request->VertexCount;
+		Model->IndexCount = Request->IndexCount;
+
+		Model->VertexBuffer = Request->VertexBuffer;
+		Model->IndexBuffer = Request->IndexBuffer;
+
+		Model->IsModelDone = true;
+
+		cout << "Model generated for " << Generation->Region.x << " " << Generation->Region.y << endl;
+	}
+	else {
+		if (Request->VertexBuffer)
+			Request->VertexBuffer->Release();
+
+		if (Request->IndexBuffer)
+			Request->IndexBuffer->Release();
+	}
+
+	// put buffer back to pool
+	BufferPool.push(Request->Buffer);
+	
+	// request is done now
+
+	delete Request;
+
+	CleanupGeneration(GenerationIndex);
+
+	// there might be some reginos waiting for buffer we just returned
+	ScheduleRegions();
+}
+
+void Geo3DViewForm::ReadTextureLoadResult(TextureLoadRequest* Request)
+{
+	int GenerationIndex = GetGenerationIndexByRegion(Request->RegionX, Request->RegionY, false);
+	if (GenerationIndex == -1)
+		throw new runtime_error("Texture load result came while there was no scheduled load");
+
+	ScheduledGeneration* Generation = &ScheduledRegions[GenerationIndex];
+
+	if (!Generation->IsTextureScheduled)
+		throw new runtime_error("Texture load result came while there was no scheduled load, but generation instance is present");
+
+	if (Generation->IsTextureDone)
+		throw new runtime_error("Texture load result came while there was texture loaded already");
+
+	Generation->IsTextureScheduled = false;
+	Generation->IsTextureDone = true;
+
+	// trying to find corresponding active region
+
+	POINT Region = SubtractPoint(Generation->Region, CenterRegion);
+	if (Region.x >= -1 && Region.x <= 1 && Region.y >= -1 && Region.y <= 1) {
+
+		RegionModel* Model = &Regions[1 + Region.x][1 + Region.y];
+
+		if (Model->IsTextureDone)
+			throw new runtime_error("Active region already have a texture, wasteful load detected");
+
+		Model->Texture = Request->Texture;
+		Model->TextureView = Request->TextureView;
+
+		Model->IsTextureDone = true;
+
+		cout << "Texture loaded for " << Generation->Region.x << " " << Generation->Region.y << endl;
+	}
+	else {
+		if (Request->Texture)
+			Request->Texture->Release();
+
+		if (Request->TextureView)
+			Request->TextureView->Release();
+	}
+
+	// request is done now
+
+	delete Request;
+
+	CleanupGeneration(GenerationIndex);
+}
+
+// Loader Callbacks
+
+VOID Geo3DViewForm::ModelGenerationWorkCallback(PTP_CALLBACK_INSTANCE Instance, PVOID Context, PTP_WORK Work)
+{
+	ModelGenerationRequest* Request = (ModelGenerationRequest*)Context;
+	Geo3DViewForm::GetInstance().ModelGenerationWork(Request);
+}
+
+VOID Geo3DViewForm::TextureLoadWorkCallback(PTP_CALLBACK_INSTANCE Instance, PVOID Context, PTP_WORK Work)
+{
+	TextureLoadRequest* Request = (TextureLoadRequest*)Context;
+	Geo3DViewForm::GetInstance().TextureLoadWork(Request);
+}
+
+// RegionModel
+
+void Geo3DViewForm::RegionModel::Free(void)
+{
+	if (VertexBuffer)
+		VertexBuffer->Release();
+	
+	if (IndexBuffer)
+		IndexBuffer->Release();
+
+	if (Texture)
+		Texture->Release();
+
+	if (TextureView)
+		TextureView->Release();
 }
