@@ -19,7 +19,7 @@ struct GeodataVertex
 {
 	XMFLOAT3 Pos;
 	XMFLOAT2 Tex;
-	XMFLOAT3 NSWETex;
+	float    NSWE;
 	XMFLOAT3 Normal;
 
 	GeodataVertex() {

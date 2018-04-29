@@ -58,15 +58,19 @@ private:
 	struct {
 		XMFLOAT4X4 FinalMatrix;
 		XMFLOAT4X4 OrthogonalMatrix;
-	} PersistentShaderVariables;
-	ID3D11Buffer *PersistentShaderVariablesRef;
+		float ScaleWorld;
+		float Padding[3];
+	} PersistentVertexVariables;
+	ID3D11Buffer *PersistentVertexVariablesRef;
 
 	struct {
 		XMFLOAT4X4 WorldMatrix;
-	} PerFrameShaderVariables;
-	ID3D11Buffer *PerFrameShaderVariablesRef;
+		float IsOrthogonal;
+		float Padding[3];
+	} PerDrawVertexVariables;
+	ID3D11Buffer *PerDrawVertexVariablesRef;
 
-	struct LightOptionsStruct {
+	struct {
 
 		XMFLOAT3 AmbientColor;
 		float Padding1;
@@ -75,18 +79,26 @@ private:
 		float Padding2;
 
 		XMFLOAT3 LightDirection;
-		float LightEnabled;
-	};
-	LightOptionsStruct LightOptions;
-	ID3D11Buffer *LightOptionsRef;
+		float Padding3;
+	} PersistentPixelVariables;
+	ID3D11Buffer *PersistentPixelVariablesRef;
 
-	ID3D11Texture2D *NSWETexture, *WhiteTexture, *RedTexture;
-	ID3D11ShaderResourceView *NSWEView, *WhiteTextureView, *RedTextureView;
+	struct {
+		float LightEnabled, IsOrthogonal, UseStaticColor, UseNSWE;
+		XMFLOAT3 StaticColor;
+		float Padding;
+	} PerDrawPixelVariables;
+	ID3D11Buffer *PerDrawPixelVariablesRef;
+
+	ID3D11Texture2D *NSWETexture;
+	ID3D11ShaderResourceView *NSWEView;
 
 	ID3D11Texture2D *L2MapTexture;
 	ID3D11ShaderResourceView *L2MapTextureView;
 	ID3D11Buffer *L2MapVertices;
 	XMVECTOR L2MapScreenPoint, L2MapScale, L2MapPlayerPosition;
+
+	ID3D11Buffer *PathFindMarkerBuffer;
 
 	ID3D11SamplerState *PointSampler;
 	ID3D11SamplerState *SmoothSampler;
@@ -183,15 +195,15 @@ private:
 
 	void CalcL2MapPosition(void);
 
-	void UpdatePerframeShaderVariables(void);
+	void UpdateAllPerDrawVariables(void);
 
 	void BuildViewMatrix(void);
 	void BuildOrthogonalMatrix(unsigned int Width, unsigned int Height);
-	void UpdatePersistentShaderVariables(void);
+	void UpdatePersistentVertexVariables(void);
 
-	void GenerateSingleColorTextures(void);
 	void GenerateNSWETexture(void);
 	void LoadL2Map(unsigned int Width, unsigned int Height);
+	void GeneratePathFindMarkers(void);
 
 	void DrawScene(void);
 

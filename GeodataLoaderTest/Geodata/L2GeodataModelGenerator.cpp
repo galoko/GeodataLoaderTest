@@ -294,7 +294,7 @@ bool L2GeodataModelGenerator::GenerateModelFromUsageMap(void)
 void L2GeodataModelGenerator::AddTopPlaneModel(int16_t SubBlock, int Direction, int16_t LayerIndex)
 {
 	int NSWE = GET_GEO_NSWE(SubBlock);
-	float TexOffsetY = (float)(15 - NSWE) / 16.0f;
+	float TexOffsetY = (float)(15 - NSWE);
 
 	uint32_t VertexOffset = NextVertexIndex;
 	for (int Index = 0; Index < Points.size(); Index++) {
@@ -312,7 +312,7 @@ void L2GeodataModelGenerator::AddTopPlaneModel(int16_t SubBlock, int Direction, 
 			Vertex->Tex = { (float)P[0] / (float)GridWidth, (float)P[1] / (float)GridHeight };
 		else
 			Vertex->Tex = { -1, 0 };
-		Vertex->NSWETex = { (float)P[0], (float)P[1], TexOffsetY };
+		Vertex->NSWE = { TexOffsetY };
 	}
 
 	if (Direction == 1) {
@@ -472,7 +472,7 @@ void L2GeodataModelGenerator::GenerateSidePlanes(int GridX, int GridY, int Offse
 				Vertex->Tex = { (float)(DynamicX ? P[0] : GridX + 1) / (float)GridWidth, (float)(!DynamicX ? P[0] : GridY + 1) / (float)GridHeight };
 			else
 				Vertex->Tex = { -1, 0 };
-			Vertex->NSWETex = { 0, 0, -1 };
+			Vertex->NSWE = { -1 };
 		}
 
 		if (PlaneDirection == (DynamicX ? 1 : -1)) {

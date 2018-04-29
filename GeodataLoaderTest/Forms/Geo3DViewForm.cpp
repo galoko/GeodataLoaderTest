@@ -80,6 +80,7 @@ void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowC
 	res = D3DCompile(ShaderData, ShaderSize, NULL, NULL, NULL, "VS", "vs_4_0", D3DCOMPILE_ENABLE_STRICTNESS, 0, &VSBlob, &Errors);
 	if (FAILED(res)) {
 		string ErrorText = string((const char *)Errors->GetBufferPointer(), Errors->GetBufferSize());
+		cout << ErrorText << endl;
 		throw new runtime_error("Couldn't compile vertex shader");
 	}
 
@@ -92,6 +93,7 @@ void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowC
 	res = D3DCompile(ShaderData, ShaderSize, NULL, NULL, NULL, "PS", "ps_4_0", D3DCOMPILE_ENABLE_STRICTNESS, 0, &PSBlob, &Errors);
 	if (FAILED(res)) {
 		string ErrorText = string((const char *)Errors->GetBufferPointer(), Errors->GetBufferSize());
+		cout << ErrorText << endl;
 		throw new runtime_error("Couldn't compile pixel shader");
 	}
 
@@ -101,10 +103,10 @@ void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowC
 
 	// creating input layout
 	static const D3D11_INPUT_ELEMENT_DESC VertexLayoutDesc[4] = {
-		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0,  0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
-		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,    0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0 },
-		{ "TEXCOORD", 1, DXGI_FORMAT_R32G32B32_FLOAT, 0, 20, D3D11_INPUT_PER_VERTEX_DATA, 0 },
-		{ "NORMAL",   0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 32, D3D11_INPUT_PER_VERTEX_DATA, 0 }
+		{ "POSITION",  0, DXGI_FORMAT_R32G32B32_FLOAT, 0,  0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+		{ "TEXCOORD",  0, DXGI_FORMAT_R32G32_FLOAT,    0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+		{ "NSWECOORD", 0, DXGI_FORMAT_R32_FLOAT,       0, 20, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+		{ "NORMAL",    0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 24, D3D11_INPUT_PER_VERTEX_DATA, 0 }
 	};
 
 	res = DirectDevice->CreateInputLayout(VertexLayoutDesc, sizeof(VertexLayoutDesc) / sizeof(*VertexLayoutDesc),
@@ -220,35 +222,45 @@ void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowC
 
 	// create shader variables references
 
-	D3D11_BUFFER_DESC PersistentShaderVariablesDesc = { };
-	PersistentShaderVariablesDesc.Usage = D3D11_USAGE_DEFAULT;
-	PersistentShaderVariablesDesc.ByteWidth = sizeof(PersistentShaderVariables);
-	PersistentShaderVariablesDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-	res = DirectDevice->CreateBuffer(&PersistentShaderVariablesDesc, NULL, &PersistentShaderVariablesRef);
+	D3D11_BUFFER_DESC PersistentVertexVariablesDesc = { };
+	PersistentVertexVariablesDesc.Usage = D3D11_USAGE_DEFAULT;
+	PersistentVertexVariablesDesc.ByteWidth = sizeof(PersistentVertexVariables);
+	PersistentVertexVariablesDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+	res = DirectDevice->CreateBuffer(&PersistentVertexVariablesDesc, NULL, &PersistentVertexVariablesRef);
 	if (FAILED(res))
-		throw new runtime_error("Couldn't create persistent shader variables ref");
+		throw new runtime_error("Couldn't create persistent vertex variables ref");
 
-	DirectDeviceCtx->VSSetConstantBuffers(0, 1, &PersistentShaderVariablesRef);
+	DirectDeviceCtx->VSSetConstantBuffers(0, 1, &PersistentVertexVariablesRef);
 
-	D3D11_BUFFER_DESC PerFrameShaderVariablesDesc = {};
-	PerFrameShaderVariablesDesc.Usage = D3D11_USAGE_DEFAULT;
-	PerFrameShaderVariablesDesc.ByteWidth = sizeof(PerFrameShaderVariables);
-	PerFrameShaderVariablesDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-	res = DirectDevice->CreateBuffer(&PerFrameShaderVariablesDesc, NULL, &PerFrameShaderVariablesRef);
+	D3D11_BUFFER_DESC PerDrawVertexVariablesDesc = {};
+	PerDrawVertexVariablesDesc.Usage = D3D11_USAGE_DEFAULT;
+	PerDrawVertexVariablesDesc.ByteWidth = sizeof(PerDrawVertexVariables);
+	PerDrawVertexVariablesDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+	res = DirectDevice->CreateBuffer(&PerDrawVertexVariablesDesc, NULL, &PerDrawVertexVariablesRef);
 	if (FAILED(res))
-		throw new runtime_error("Couldn't create per frame shader variables ref");
+		throw new runtime_error("Couldn't create per draw vertex variables ref");
 
-	DirectDeviceCtx->VSSetConstantBuffers(1, 1, &PerFrameShaderVariablesRef);
+	DirectDeviceCtx->VSSetConstantBuffers(1, 1, &PerDrawVertexVariablesRef);
 
-	D3D11_BUFFER_DESC LightOptionsDesc = { };
-	LightOptionsDesc.Usage = D3D11_USAGE_DEFAULT;
-	LightOptionsDesc.ByteWidth = sizeof(LightOptions);
-	LightOptionsDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-	res = DirectDevice->CreateBuffer(&LightOptionsDesc, NULL, &LightOptionsRef);
+	D3D11_BUFFER_DESC PersistentPixelVariablesDesc = { };
+	PersistentPixelVariablesDesc.Usage = D3D11_USAGE_DEFAULT;
+	PersistentPixelVariablesDesc.ByteWidth = sizeof(PersistentPixelVariables);
+	PersistentPixelVariablesDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+	res = DirectDevice->CreateBuffer(&PersistentPixelVariablesDesc, NULL, &PersistentPixelVariablesRef);
 	if (FAILED(res))
-		throw new runtime_error("Couldn't create shader light options ref");
+		throw new runtime_error("Couldn't create persistent pixel variables ref");
 
-	DirectDeviceCtx->PSSetConstantBuffers(0, 1, &LightOptionsRef);
+	DirectDeviceCtx->PSSetConstantBuffers(0, 1, &PersistentPixelVariablesRef);
+
+	D3D11_BUFFER_DESC PerDrawPixelVariablesDesc = {};
+	PerDrawPixelVariablesDesc.Usage = D3D11_USAGE_DEFAULT;
+	PerDrawPixelVariablesDesc.ByteWidth = sizeof(PerDrawPixelVariables);
+	PerDrawPixelVariablesDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+	res = DirectDevice->CreateBuffer(&PerDrawPixelVariablesDesc, NULL, &PerDrawPixelVariablesRef);
+	if (FAILED(res))
+		throw new runtime_error("Couldn't create PerDraw pixel variables ref");
+
+	DirectDeviceCtx->PSSetConstantBuffers(1, 1, &PerDrawPixelVariablesRef);
 
 	// Scene loader
 	
@@ -289,23 +301,24 @@ void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowC
 
 	// setup light
 
-	LightOptions = {};
-	LightOptions.AmbientColor = { 0.125f, 0.125f, 0.75f };
-	LightOptions.DiffuseColor = { 0.5f, 0.5f, 75.0f };
-	XMStoreFloat3(&LightOptions.LightDirection, XMVector3Normalize(XMVectorSet(-0.512651205f, 0.189535633f, -0.837415695f, 1.0f)));
-	LightOptions.LightEnabled = NSWETextureEnabled;
+	PersistentPixelVariables = {};
+	PersistentPixelVariables.AmbientColor = { 0.125f, 0.125f, 0.75f };
+	PersistentPixelVariables.DiffuseColor = { 0.5f, 0.5f, 75.0f };
+	XMStoreFloat3(&PersistentPixelVariables.LightDirection, XMVector3Normalize(XMVectorSet(-0.512651205f, 0.189535633f, -0.837415695f, 1.0f)));
 
-	DirectDeviceCtx->UpdateSubresource(LightOptionsRef, 0, NULL, &LightOptions, 0, 0);
+	DirectDeviceCtx->UpdateSubresource(PersistentPixelVariablesRef, 0, NULL, &PersistentPixelVariables, 0, 0);
 
 	// load resources
 
-	GenerateSingleColorTextures();
 	GenerateNSWETexture();
 	LoadL2Map(Width, Height);
+	GeneratePathFindMarkers();
 
 	// Scale
 
-	ScaleWorld = 1.0f / 100.0f;
+	PersistentVertexVariables.ScaleWorld = 100.0f;
+
+	ScaleWorld = 1.0f / PersistentVertexVariables.ScaleWorld;
 	ScaleWorldZ = ScaleWorld / 10.0f;
 
 	// setup matrices
@@ -367,7 +380,7 @@ void Geo3DViewForm::ProcessMouseInput(LONG dx, LONG dy) {
 	// cout << CameraAngle.x << " " << CameraAngle.y << endl;
 
 	BuildViewMatrix();
-	UpdatePersistentShaderVariables();
+	UpdatePersistentVertexVariables();
 }
 
 void Geo3DViewForm::ProcessKeyboardInput(double dt)
@@ -401,7 +414,7 @@ void Geo3DViewForm::ProcessKeyboardInput(double dt)
 
 	CalcL2MapPosition();
 	BuildViewMatrix();
-	UpdatePersistentShaderVariables();
+	UpdatePersistentVertexVariables();
 
 	CheckRegions(false);
 }
@@ -448,9 +461,6 @@ void Geo3DViewForm::PrintCurrentCoord(void)
 void Geo3DViewForm::SwitchNSWETextureMode(void)
 {
 	NSWETextureEnabled = !NSWETextureEnabled;
-
-	LightOptions.LightEnabled = NSWETextureEnabled;
-	DirectDeviceCtx->UpdateSubresource(LightOptionsRef, 0, NULL, &LightOptions, 0, 0);
 }
 
 // Window Callback
@@ -563,12 +573,14 @@ void Geo3DViewForm::CalcL2MapPosition(void)
 	// cout << "Debug padla: " << X << " " << Y << ", eban" << endl;
 }
 
-void Geo3DViewForm::UpdatePerframeShaderVariables(void)
+void Geo3DViewForm::UpdateAllPerDrawVariables(void)
 {
 	XMMATRIX InvWorldMatrix = XMMatrixTranspose(WorldMatrix);
-	XMStoreFloat4x4(&PerFrameShaderVariables.WorldMatrix, InvWorldMatrix);
+	XMStoreFloat4x4(&PerDrawVertexVariables.WorldMatrix, InvWorldMatrix);
 
-	DirectDeviceCtx->UpdateSubresource(PerFrameShaderVariablesRef, 0, NULL, &PerFrameShaderVariables, 0, 0);
+	DirectDeviceCtx->UpdateSubresource(PerDrawVertexVariablesRef, 0, NULL, &PerDrawVertexVariables, 0, 0);
+
+	DirectDeviceCtx->UpdateSubresource(PerDrawPixelVariablesRef, 0, NULL, &PerDrawPixelVariables, 0, 0);
 }
 
 void Geo3DViewForm::BuildViewMatrix(void)
@@ -590,54 +602,15 @@ void Geo3DViewForm::BuildOrthogonalMatrix(unsigned int Width, unsigned int Heigh
 	OrthogonalMatrix = XMMatrixOrthographicLH((float)Width, (float)Height, 0.0, 0.5);
 }
 
-void Geo3DViewForm::UpdatePersistentShaderVariables(void)
+void Geo3DViewForm::UpdatePersistentVertexVariables(void)
 {
 	XMMATRIX FinalMatrix = XMMatrixTranspose(ViewMatrix * ProjectionMatrix);
-	XMStoreFloat4x4(&PersistentShaderVariables.FinalMatrix, FinalMatrix);
+	XMStoreFloat4x4(&PersistentVertexVariables.FinalMatrix, FinalMatrix);
 
 	XMMATRIX InvOrthogonalMatrix = XMMatrixTranspose(OrthogonalMatrix);
-	XMStoreFloat4x4(&PersistentShaderVariables.OrthogonalMatrix, InvOrthogonalMatrix);
+	XMStoreFloat4x4(&PersistentVertexVariables.OrthogonalMatrix, InvOrthogonalMatrix);
 
-	DirectDeviceCtx->UpdateSubresource(PersistentShaderVariablesRef, 0, NULL, &PersistentShaderVariables, 0, 0);
-}
-
-void Geo3DViewForm::GenerateSingleColorTextures(void)
-{
-	HRESULT res;
-
-	D3D11_TEXTURE2D_DESC TextureDesc = {};
-	TextureDesc.Width = 1;
-	TextureDesc.Height = 1;
-	TextureDesc.MipLevels = 1;
-	TextureDesc.ArraySize = 1;
-	TextureDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-	TextureDesc.SampleDesc.Count = 1;
-	TextureDesc.SampleDesc.Quality = 0;
-	TextureDesc.Usage = D3D11_USAGE_DEFAULT;
-	TextureDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-	TextureDesc.CPUAccessFlags = 0;
-
-	uint32_t SinglePixel;
-
-	D3D11_SUBRESOURCE_DATA InitialData = { };
-	InitialData.pSysMem = &SinglePixel;
-	InitialData.SysMemPitch = sizeof(SinglePixel);
-
-	SinglePixel = 0x00FFFFFF;
-	res = DirectDevice->CreateTexture2D(&TextureDesc, &InitialData, &WhiteTexture);
-	if (FAILED(res))
-		throw new runtime_error("Couldn't create white pixel texture");
-	res = DirectDevice->CreateShaderResourceView(WhiteTexture, NULL, &WhiteTextureView);
-	if (FAILED(res))
-		throw new runtime_error("Couldn't create white pixel shader view");
-
-	SinglePixel = 0xFFFF0000;
-	res = DirectDevice->CreateTexture2D(&TextureDesc, &InitialData, &RedTexture);
-	if (FAILED(res))
-		throw new runtime_error("Couldn't create white pixel texture");
-	res = DirectDevice->CreateShaderResourceView(RedTexture, NULL, &RedTextureView);
-	if (FAILED(res))
-		throw new runtime_error("Couldn't create white pixel shader view");
+	DirectDeviceCtx->UpdateSubresource(PersistentVertexVariablesRef, 0, NULL, &PersistentVertexVariables, 0, 0);
 }
 
 void Geo3DViewForm::GenerateNSWETexture(void)
@@ -716,10 +689,10 @@ void Geo3DViewForm::LoadL2Map(unsigned int Width, unsigned int Height)
 	Rect[2].Pos = { 0, -1, 0.0f };
 	Rect[3].Pos = { 1, -1, 0.0f };
 
-	Rect[0].Tex = { -(1 + 1), -(1 + 1) };
-	Rect[1].Tex = { -(0 + 1), -(1 + 1) };
-	Rect[2].Tex = { -(1 + 1), -(0 + 1) };
-	Rect[3].Tex = { -(0 + 1), -(0 + 1) };
+	Rect[0].Tex = { 0, 0 };
+	Rect[1].Tex = { 1, 0 };
+	Rect[2].Tex = { 0, 1 };
+	Rect[3].Tex = { 1, 1 };
 
 	double Angle = M_PI / 2;
 	for (int Index = 6; Index >= 4; Index--) {
@@ -727,7 +700,7 @@ void Geo3DViewForm::LoadL2Map(unsigned int Width, unsigned int Height)
 		float Len = Index == 6 ? 1.5f : 1.0f;
 
 		Rect[Index].Pos = { (float)cos(Angle) * Len, (float)sin(Angle) * Len, 0.0f };
-		Rect[Index].Tex = { -1, -1 };
+		Rect[Index].Tex = { 0, 0 };
 
 		Angle += M_PI / 1.5;
 	}
@@ -743,6 +716,30 @@ void Geo3DViewForm::LoadL2Map(unsigned int Width, unsigned int Height)
 	res = DirectDevice->CreateBuffer(&VertexBufferDesc, &InitialData, &L2MapVertices);
 	if (FAILED(res))
 		throw new runtime_error("Couldn't create l2 map rect vertex buffer");
+}
+
+void Geo3DViewForm::GeneratePathFindMarkers(void)
+{
+	HRESULT res;
+
+	GeodataVertex Rect[4] = {};
+
+	Rect[0].Pos = { 0,  0, 0.0f };
+	Rect[1].Pos = { 1,  0, 0.0f };
+	Rect[2].Pos = { 0,  1, 0.0f };
+	Rect[3].Pos = { 1,  1, 0.0f };
+
+	D3D11_SUBRESOURCE_DATA InitialData = {};
+
+	// creating buffers
+	D3D11_BUFFER_DESC VertexBufferDesc = {};
+	VertexBufferDesc.ByteWidth = sizeof(Rect);
+	VertexBufferDesc.Usage = D3D11_USAGE_DEFAULT;
+	VertexBufferDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+	InitialData.pSysMem = &Rect;
+	res = DirectDevice->CreateBuffer(&VertexBufferDesc, &InitialData, &PathFindMarkerBuffer);
+	if (FAILED(res))
+		throw new runtime_error("Couldn't create marker vertex buffer");
 }
 
 void Geo3DViewForm::WaitForNextFrame(void)
@@ -778,13 +775,16 @@ void Geo3DViewForm::DrawScene(void)
 	DirectDeviceCtx->ClearRenderTargetView(RenderTargetView, color);
 	DirectDeviceCtx->ClearDepthStencilView(DepthStencilView, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 
-	if (NSWETextureEnabled)
-		DirectDeviceCtx->PSSetShaderResources(1, 1, &NSWEView);
-	else
-		DirectDeviceCtx->PSSetShaderResources(1, 1, &WhiteTextureView);
+	DirectDeviceCtx->PSSetShaderResources(1, 1, &NSWEView);
 
 	WorldMatrix = XMMatrixIdentity();
-	UpdatePerframeShaderVariables();
+	PerDrawVertexVariables.IsOrthogonal = 0.0f;
+	PerDrawPixelVariables.IsOrthogonal = 0.0f;
+	PerDrawPixelVariables.LightEnabled = NSWETextureEnabled;
+	PerDrawPixelVariables.UseNSWE = NSWETextureEnabled;
+	PerDrawPixelVariables.UseStaticColor = NSWETextureEnabled;
+	PerDrawPixelVariables.StaticColor = { 1, 1, 1 };
+	UpdateAllPerDrawVariables();
 
 	DirectDeviceCtx->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 	DirectDeviceCtx->OMSetDepthStencilState(DepthStencilState3D, 0);
@@ -795,10 +795,24 @@ void Geo3DViewForm::DrawScene(void)
 
 			if (Model->IsModelDone && Model->IndexCount > 0) {
 
-				if (!NSWETextureEnabled && Model->TextureView != NULL)
+				if (!NSWETextureEnabled && Model->TextureView != NULL) {
+
 					DirectDeviceCtx->PSSetShaderResources(0, 1, &Model->TextureView);
-				else
-					DirectDeviceCtx->PSSetShaderResources(0, 1, &WhiteTextureView);
+
+					if (PerDrawPixelVariables.UseStaticColor != NSWETextureEnabled || PerDrawPixelVariables.LightEnabled != NSWETextureEnabled) {
+						PerDrawPixelVariables.UseStaticColor = NSWETextureEnabled;
+						PerDrawPixelVariables.LightEnabled = NSWETextureEnabled;
+						UpdateAllPerDrawVariables();
+					}
+				}
+				else {
+
+					if (PerDrawPixelVariables.UseStaticColor != true || PerDrawPixelVariables.LightEnabled != true) {
+						PerDrawPixelVariables.UseStaticColor = true;
+						PerDrawPixelVariables.LightEnabled = true;
+						UpdateAllPerDrawVariables();
+					}
+				}
 
 				UINT stride = sizeof(GeodataVertex);
 				UINT offset = 0;
@@ -812,22 +826,29 @@ void Geo3DViewForm::DrawScene(void)
 
 	if (DrawMap) {
 
+		PerDrawVertexVariables.IsOrthogonal = 1.0f;
+		PerDrawPixelVariables.IsOrthogonal = 1.0f;
+		PerDrawPixelVariables.LightEnabled = false;
+		PerDrawPixelVariables.UseNSWE = false;
+
 		DirectDeviceCtx->OMSetDepthStencilState(DepthStencilState2D, 0);
 		DirectDeviceCtx->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
 		UINT stride = sizeof(GeodataVertex);
 		UINT offset = 0;
 		DirectDeviceCtx->IASetVertexBuffers(0, 1, &L2MapVertices, &stride, &offset);
 
+		PerDrawPixelVariables.UseStaticColor = false;
 		WorldMatrix = XMMatrixAffineTransformation2D(L2MapScale, XMVectorSet(0, 0, 0, 1), 0, L2MapScreenPoint);
-		UpdatePerframeShaderVariables();
+		UpdateAllPerDrawVariables();
 
 		DirectDeviceCtx->PSSetShaderResources(0, 1, &L2MapTextureView);
 		DirectDeviceCtx->Draw(4, 0);
 
-		WorldMatrix = XMMatrixAffineTransformation2D(XMVectorSet(10, 10, 1, 1), XMVectorSet(0, 0, 0, 1), CameraAngle.x - M_PI, L2MapScreenPoint + (L2MapPlayerPosition * L2MapScale));
-		UpdatePerframeShaderVariables();
+		PerDrawPixelVariables.UseStaticColor = true;
+		PerDrawPixelVariables.StaticColor = { 1, 0, 0 };
+		WorldMatrix = XMMatrixAffineTransformation2D(XMVectorSet(10, 10, 1, 1), XMVectorSet(0, 0, 0, 1), CameraAngle.x - (float)M_PI, L2MapScreenPoint + (L2MapPlayerPosition * L2MapScale));
+		UpdateAllPerDrawVariables();
 
-		DirectDeviceCtx->PSSetShaderResources(0, 1, &RedTextureView);
 		DirectDeviceCtx->Draw(3, 4);
 	}
 
@@ -873,7 +894,7 @@ void Geo3DViewForm::TeleportTo(int WorldX, int WorldY, int WorldZ)
 
 	CalcL2MapPosition();
 	BuildViewMatrix();
-	UpdatePersistentShaderVariables();
+	UpdatePersistentVertexVariables();
 
 	CheckRegions(true);
 }
