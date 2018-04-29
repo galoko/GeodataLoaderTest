@@ -47,16 +47,24 @@ private:
 	ID3D11Texture2D *DepthStencilBuffer;
 	ID3D11DepthStencilView *DepthStencilView;
 
+	ID3D11DepthStencilState *DepthStencilState3D, *DepthStencilState2D;
+
 	XMMATRIX WorldMatrix;
+
 	XMMATRIX ViewMatrix;
 	XMMATRIX ProjectionMatrix;
+	XMMATRIX OrthogonalMatrix;
 
-	struct ShaderMatricesStruct {
-		XMFLOAT4X4 WorldMatrix;
+	struct {
 		XMFLOAT4X4 FinalMatrix;
-	};
-	ShaderMatricesStruct ShaderMatrices;
-	ID3D11Buffer *ShaderMatricesRef;
+		XMFLOAT4X4 OrthogonalMatrix;
+	} PersistentShaderVariables;
+	ID3D11Buffer *PersistentShaderVariablesRef;
+
+	struct {
+		XMFLOAT4X4 WorldMatrix;
+	} PerFrameShaderVariables;
+	ID3D11Buffer *PerFrameShaderVariablesRef;
 
 	struct LightOptionsStruct {
 
@@ -72,8 +80,13 @@ private:
 	LightOptionsStruct LightOptions;
 	ID3D11Buffer *LightOptionsRef;
 
-	ID3D11Texture2D *NSWETexture, *WhitePixelTexture;
-	ID3D11ShaderResourceView *NSWEView, *WhitePixelView;
+	ID3D11Texture2D *NSWETexture, *WhiteTexture, *RedTexture;
+	ID3D11ShaderResourceView *NSWEView, *WhiteTextureView, *RedTextureView;
+
+	ID3D11Texture2D *L2MapTexture;
+	ID3D11ShaderResourceView *L2MapTextureView;
+	ID3D11Buffer *L2MapVertices;
+	XMVECTOR L2MapScreenPoint, L2MapScale, L2MapPlayerPosition;
 
 	ID3D11SamplerState *PointSampler;
 	ID3D11SamplerState *SmoothSampler;
@@ -99,6 +112,7 @@ private:
 	};
 
 	stack<ModelBuffer> BufferPool;
+	uint32_t AvailableTexturesLoadCount;
 	PTP_POOL ExecutionPool;
 
 	struct ScheduledGeneration {
@@ -130,6 +144,8 @@ private:
 	POINT CenterRegion;
 	RegionModels Regions;
 
+	float ScaleWorld, ScaleWorldZ;
+
 	// GUI
 
 	XMFLOAT3 CameraPosition;
@@ -141,6 +157,7 @@ private:
 	bool UseVSync = true;
 	bool IsInFocus;
 	bool NSWETextureEnabled;
+	bool DrawMap;
 
 #define KEYS_COUNT 256
 	bool PressedKeys[KEYS_COUNT];
@@ -164,12 +181,17 @@ private:
 
 	// 3D Utils
 
-	void BuildViewMatrix(void);
-	void BuildWorldMatrix(void);
-	void UpdateShaderVariables(void);
+	void CalcL2MapPosition(void);
 
-	void GenerateWhitePixelTexture(void);
+	void UpdatePerframeShaderVariables(void);
+
+	void BuildViewMatrix(void);
+	void BuildOrthogonalMatrix(unsigned int Width, unsigned int Height);
+	void UpdatePersistentShaderVariables(void);
+
+	void GenerateSingleColorTextures(void);
 	void GenerateNSWETexture(void);
+	void LoadL2Map(unsigned int Width, unsigned int Height);
 
 	void DrawScene(void);
 
@@ -198,6 +220,10 @@ private:
 		ID3D11Texture2D* Texture;
 		ID3D11ShaderResourceView *TextureView;
 	};
+
+	float ToScene(float F);
+	void ToScene(int X, int Y, int Z, float& FX, float& FY, float& FZ);
+	void ToInt(float FX, float FY, float FZ, int32_t& X, int32_t& Y, int32_t& Z);
 
 	void TeleportTo(int WorldX, int WorldY, int WorldZ);
 	void ScheduleModelGeneration(int RegionX, int RegionY, ModelBuffer Buffer);

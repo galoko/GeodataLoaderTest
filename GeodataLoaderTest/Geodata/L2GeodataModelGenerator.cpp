@@ -7,8 +7,11 @@
 // Constructor
 
 void L2GeodataModelGenerator::GenerateGeodataScene(int32_t WorldX, int32_t WorldY, uint32_t Width, uint32_t Height, 
-	GeodataVertex* VertexBuffer, uint32_t& VertexBufferSize, uint32_t* IndexBuffer, uint32_t& IndexBufferSize)
+	float ScaleWorld, float ScaleWorldZ, GeodataVertex* VertexBuffer, uint32_t& VertexBufferSize, uint32_t* IndexBuffer, uint32_t& IndexBufferSize)
 {
+	this->ScaleWorld = ScaleWorld;
+	this->ScaleWorldZ = ScaleWorldZ;
+
 	SetupOutputBuffers(VertexBuffer, VertexBufferSize, IndexBuffer, IndexBufferSize);
 
 	SetupFloodFillStack(1000 * 1000);
@@ -302,7 +305,8 @@ void L2GeodataModelGenerator::AddTopPlaneModel(int16_t SubBlock, int Direction, 
 
 		GeodataVertex *Vertex = &VertexBuffer[VertexIndex];
 
-		Vertex->Pos = { (float) (GridSubBlockX + P[0]) / (float)InvScaleWorld, (float)(GridSubBlockY + P[1]) / (float)InvScaleWorld, (float)GET_GEO_HEIGHT(SubBlock) / (float)InvScaleZ };
+		ToFloat(GridSubBlockX + P[0], GridSubBlockY + P[1], GET_GEO_HEIGHT(SubBlock), Vertex->Pos.x, Vertex->Pos.y, Vertex->Pos.z);
+
 		Vertex->Normal = { 0, 0, (float)Direction };
 		if (LayerIndex == 0 && Direction == 1)
 			Vertex->Tex = { (float)P[0] / (float)GridWidth, (float)P[1] / (float)GridHeight };
@@ -460,9 +464,10 @@ void L2GeodataModelGenerator::GenerateSidePlanes(int GridX, int GridY, int Offse
 
 			GeodataVertex *Vertex = &VertexBuffer[VertexIndex];
 
-			Vertex->Pos = { (float)(GridSubBlockX + (DynamicX ? P[0] : GridX + 1)) / (float)InvScaleWorld, (float)(GridSubBlockY + (!DynamicX ? P[0] : GridY + 1)) / (float)InvScaleWorld, (float)GridZToHeight(P[1]) / (float)InvScaleZ };
+			ToFloat(GridSubBlockX + (DynamicX ? P[0] : GridX + 1), GridSubBlockY + (!DynamicX ? P[0] : GridY + 1), GridZToHeight(P[1]),
+				Vertex->Pos.x, Vertex->Pos.y, Vertex->Pos.z);
+			
 			Vertex->Normal = { (float)(OffsetX * -PlaneDirection), (float)(OffsetY * -PlaneDirection), 0 };
-			// TODO
 			if (StartRange->TopLayerIndex == 0 && StartRange->LowestLayerIndex == 0)
 				Vertex->Tex = { (float)(DynamicX ? P[0] : GridX + 1) / (float)GridWidth, (float)(!DynamicX ? P[0] : GridY + 1) / (float)GridHeight };
 			else
@@ -479,6 +484,15 @@ void L2GeodataModelGenerator::GenerateSidePlanes(int GridX, int GridY, int Offse
 				AllocateIndexIndex(VertexOffset + Indices[Index]);
 		}
 	}
+}
+
+// Int to float conversion utils
+
+void L2GeodataModelGenerator::ToFloat(int X, int Y, int Z, float& FX, float& FY, float& FZ)
+{
+	FX = (float)X * ScaleWorld;
+	FY = (float)Y * ScaleWorld;
+	FZ = (float)Z * ScaleWorldZ;
 }
 
 // Generation Grid

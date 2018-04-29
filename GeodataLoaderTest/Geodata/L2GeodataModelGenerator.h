@@ -71,6 +71,8 @@ private:
 	uint32_t *IndexBuffer;
 	uint32_t IndexBufferSize, NextIndexIndex;
 
+	float ScaleWorld, ScaleWorldZ;
+
 	// Generation Grid definition
 
 	int32_t GridSubBlockX;
@@ -132,6 +134,10 @@ private:
 	void GenerateTopPlanes(int GridX, int GridY);
 	void GenerateSidePlanes(int GridX, int GridY, int OffsetX, int OffsetY);
 
+	// Int to float conversion utils
+
+	void ToFloat(int X, int Y, int Z, float& FX, float& FY, float& FZ);
+
 	// Generation Grid
 
 	void SetupGenerationGrid(int32_t WorldX, int32_t WorldY, uint32_t Width, uint32_t Height);
@@ -164,14 +170,11 @@ private:
 	bool PopStackPoint(POINT& Point);
 	void FinalizeFloodFillStack(void);
 public:
-	static const int InvScaleWorld = 10000;
-	static const int InvScaleZ = 10 * InvScaleWorld;
-
 	static const int NSWE_TEX_WIDTH = 16;
 	static const int NSWE_TEX_HEIGHT = 16 * NSWE_TEX_WIDTH;
 		
-	void GenerateGeodataScene(int32_t WorldX, int32_t WorldY, uint32_t Width, uint32_t Height, GeodataVertex *VertexBuffer, uint32_t &VertexBufferSize,
-		uint32_t *IndexBuffer, uint32_t &IndexBufferSize);
+	void GenerateGeodataScene(int32_t WorldX, int32_t WorldY, uint32_t Width, uint32_t Height, float ScaleWorld, float ScaleWorldZ,
+		GeodataVertex *VertexBuffer, uint32_t &VertexBufferSize, uint32_t *IndexBuffer, uint32_t &IndexBufferSize);
 
 	static void GenerateNSWETexture(uint32_t* Pixels, int32_t Width, int32_t Height);
 };

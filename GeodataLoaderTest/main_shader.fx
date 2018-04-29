@@ -1,8 +1,13 @@
-cbuffer ShaderVariables : register(b0)
+cbuffer Persistent : register(b0)
+{
+    float4x4 FinalMatrix;
+    float4x4 OrthogonalMatrix;
+};
+
+cbuffer PerFrame : register(b1)
 {
     float4x4 WorldMatrix;
-    float4x4 FinalMatrix;
-};
+}
 
 cbuffer LightOptions : register(b0)
 {
@@ -41,7 +46,11 @@ struct PS_INPUT
 PS_INPUT VS(VS_INPUT input)
 {
     PS_INPUT output;
-    output.Pos = mul(float4(input.Pos, 1.0f), FinalMatrix);
+    
+    if (input.Tex0.y >= 0.0) 
+        output.Pos = mul(mul(float4(input.Pos, 1.0f), WorldMatrix), FinalMatrix);
+    else
+        output.Pos = mul(mul(float4(input.Pos, 1.0f), WorldMatrix), OrthogonalMatrix);
     output.Tex0 = input.Tex0;
     output.Tex1 = input.Tex1;
     output.Normal = input.Normal;
@@ -71,6 +80,11 @@ float4 PS(PS_INPUT input) : SV_Target
 {
     float4 Color;
 
+    if (input.Tex0.y < 0.0) {
+        Color = MainTexture.Sample(SmoothSampler, input.Tex0);
+        return Color;
+    }
+
     // texture or white color
     if (input.Tex0.x >= 0.0)
         Color = MainTexture.Sample(SmoothSampler, input.Tex0);
@@ -78,6 +92,9 @@ float4 PS(PS_INPUT input) : SV_Target
         Color = float4(1.0f, 1.0f, 1.0f, 1.0f);
         
     // then light
+    // input.Tex0.x < 0.0: Tex0.x is less than zero if it's not top layer of geodata polygon
+    // Color.a == 0.0f: anything pained with WhitePixel texture is lighted
+    // or light is just enabled
     if (input.Tex0.x < 0.0 || Color.a == 0.0f || LightEnabled > 0.5f)
         Color = ApplyLight(Color, input.Normal);
     

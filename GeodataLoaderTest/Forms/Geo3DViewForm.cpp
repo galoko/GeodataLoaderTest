@@ -147,6 +147,37 @@ void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowC
 	if (FAILED(res))
 		throw new runtime_error("Couldn't create depth stencil view");
 
+	// creating depth stencil states
+
+	D3D11_DEPTH_STENCIL_DESC DepthStencilStateDesc;
+	DepthStencilStateDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
+	DepthStencilStateDesc.DepthFunc = D3D11_COMPARISON_LESS;
+	DepthStencilStateDesc.StencilEnable = FALSE;
+	DepthStencilStateDesc.StencilReadMask = 0xFF;
+	DepthStencilStateDesc.StencilWriteMask = 0xFF;
+
+	// Stencil operations if pixel is front-facing
+	DepthStencilStateDesc.FrontFace.StencilFailOp = D3D11_STENCIL_OP_KEEP;
+	DepthStencilStateDesc.FrontFace.StencilDepthFailOp = D3D11_STENCIL_OP_INCR;
+	DepthStencilStateDesc.FrontFace.StencilPassOp = D3D11_STENCIL_OP_KEEP;
+	DepthStencilStateDesc.FrontFace.StencilFunc = D3D11_COMPARISON_ALWAYS;
+
+	// Stencil operations if pixel is back-facing
+	DepthStencilStateDesc.BackFace.StencilFailOp = D3D11_STENCIL_OP_KEEP;
+	DepthStencilStateDesc.BackFace.StencilDepthFailOp = D3D11_STENCIL_OP_DECR;
+	DepthStencilStateDesc.BackFace.StencilPassOp = D3D11_STENCIL_OP_KEEP;
+	DepthStencilStateDesc.BackFace.StencilFunc = D3D11_COMPARISON_ALWAYS;
+
+	DepthStencilStateDesc.DepthEnable = TRUE;
+	res = DirectDevice->CreateDepthStencilState(&DepthStencilStateDesc, &DepthStencilState3D);
+	if (FAILED(res))
+		throw new runtime_error("Couldn't create depth stencil state");
+
+	DepthStencilStateDesc.DepthEnable = FALSE;
+	res = DirectDevice->CreateDepthStencilState(&DepthStencilStateDesc, &DepthStencilState2D);
+	if (FAILED(res))
+		throw new runtime_error("Couldn't create depth stencil state");
+
 	// setup cull modes
 	D3D11_RASTERIZER_DESC CullModeDesc = { };
 	CullModeDesc.CullMode = D3D11_CULL_FRONT;
@@ -189,15 +220,25 @@ void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowC
 
 	// create shader variables references
 
-	D3D11_BUFFER_DESC ShaderVariablesDesc = { };
-	ShaderVariablesDesc.Usage = D3D11_USAGE_DEFAULT;
-	ShaderVariablesDesc.ByteWidth = sizeof(ShaderMatrices);
-	ShaderVariablesDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-	res = DirectDevice->CreateBuffer(&ShaderVariablesDesc, NULL, &ShaderMatricesRef);
+	D3D11_BUFFER_DESC PersistentShaderVariablesDesc = { };
+	PersistentShaderVariablesDesc.Usage = D3D11_USAGE_DEFAULT;
+	PersistentShaderVariablesDesc.ByteWidth = sizeof(PersistentShaderVariables);
+	PersistentShaderVariablesDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+	res = DirectDevice->CreateBuffer(&PersistentShaderVariablesDesc, NULL, &PersistentShaderVariablesRef);
 	if (FAILED(res))
-		throw new runtime_error("Couldn't create shader matrices ref");
+		throw new runtime_error("Couldn't create persistent shader variables ref");
 
-	DirectDeviceCtx->VSSetConstantBuffers(0, 1, &ShaderMatricesRef);
+	DirectDeviceCtx->VSSetConstantBuffers(0, 1, &PersistentShaderVariablesRef);
+
+	D3D11_BUFFER_DESC PerFrameShaderVariablesDesc = {};
+	PerFrameShaderVariablesDesc.Usage = D3D11_USAGE_DEFAULT;
+	PerFrameShaderVariablesDesc.ByteWidth = sizeof(PerFrameShaderVariables);
+	PerFrameShaderVariablesDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+	res = DirectDevice->CreateBuffer(&PerFrameShaderVariablesDesc, NULL, &PerFrameShaderVariablesRef);
+	if (FAILED(res))
+		throw new runtime_error("Couldn't create per frame shader variables ref");
+
+	DirectDeviceCtx->VSSetConstantBuffers(1, 1, &PerFrameShaderVariablesRef);
 
 	D3D11_BUFFER_DESC LightOptionsDesc = { };
 	LightOptionsDesc.Usage = D3D11_USAGE_DEFAULT;
@@ -220,6 +261,8 @@ void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowC
 		BufferPool.push(Buffer);
 	}
 
+	AvailableTexturesLoadCount = BUFFERS_COUNT;
+
 	ExecutionPool = CreateThreadpool(NULL);
 	SetThreadpoolThreadMinimum(ExecutionPool, THREADS_COUNT);
 	SetThreadpoolThreadMaximum(ExecutionPool, THREADS_COUNT);
@@ -227,7 +270,6 @@ void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowC
 	// setup frame
 	DirectDeviceCtx->OMSetRenderTargets(1, &RenderTargetView, DepthStencilView);
 
-	DirectDeviceCtx->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 	DirectDeviceCtx->IASetInputLayout(VertexLayout);
 
 	DirectDeviceCtx->VSSetShader(VertexShader, 0, 0);
@@ -245,16 +287,6 @@ void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowC
 	if (!RegisterRawInputDevices(Rid, 1, sizeof(Rid[0])))
 		throw new runtime_error("Couldn't register raw devices");
 
-	// setup camera
-
-	Up = XMVectorSet(0, 0, 1, 1);
-
-	// setup matrices
-
-	ProjectionMatrix = XMMatrixPerspectiveFovLH(0.5f * (float)M_PI, (float)Width / (float)Height, 0.1f / (float)L2GeodataModelGenerator::InvScaleWorld, 4500.0f / (float)L2GeodataModelGenerator::InvScaleWorld);
-
-	BuildWorldMatrix();
-
 	// setup light
 
 	LightOptions = {};
@@ -267,8 +299,24 @@ void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowC
 
 	// load resources
 
-	GenerateWhitePixelTexture();
+	GenerateSingleColorTextures();
 	GenerateNSWETexture();
+	LoadL2Map(Width, Height);
+
+	// Scale
+
+	ScaleWorld = 1.0f / 100.0f;
+	ScaleWorldZ = ScaleWorld / 10.0f;
+
+	// setup matrices
+
+	ProjectionMatrix = XMMatrixPerspectiveFovLH(0.5f * (float)M_PI, (float)Width / (float)Height, ToScene(1.0f), ToScene(1500.0f));
+
+	BuildOrthogonalMatrix(Width, Height);
+
+	// setup camera
+
+	Up = XMVectorSet(0, 0, 1, 1);
 
 	// TODO save camera and position to a file
 	CameraAngle.y = 3;
@@ -319,7 +367,7 @@ void Geo3DViewForm::ProcessMouseInput(LONG dx, LONG dy) {
 	// cout << CameraAngle.x << " " << CameraAngle.y << endl;
 
 	BuildViewMatrix();
-	UpdateShaderVariables();
+	UpdatePersistentShaderVariables();
 }
 
 void Geo3DViewForm::ProcessKeyboardInput(double dt)
@@ -342,7 +390,7 @@ void Geo3DViewForm::ProcessKeyboardInput(double dt)
 	if (PressedKeys[VK_SPACE] || PressedKeys[VK_CONTROL])
 		Displacement += Up;
 
-	Displacement = XMVector3Normalize(Displacement) * (float)(MoveSpeed / (float)L2GeodataModelGenerator::InvScaleWorld * dt);
+	Displacement = XMVector3Normalize(Displacement) * (float)(ToScene(MoveSpeed) * dt);
 
 	if (XMVector3LengthSq(Displacement).m128_f32[0] <= 0.0)
 		return;
@@ -351,8 +399,9 @@ void Geo3DViewForm::ProcessKeyboardInput(double dt)
 	Position += Displacement;
 	XMStoreFloat3(&CameraPosition, Position);
 
+	CalcL2MapPosition();
 	BuildViewMatrix();
-	UpdateShaderVariables();
+	UpdatePersistentShaderVariables();
 
 	CheckRegions(false);
 }
@@ -377,6 +426,9 @@ bool Geo3DViewForm::HandleKeyPress(int Key)
 	case 'V':
 		UseVSync = !UseVSync;
 		break;
+	case 'M':
+		DrawMap = !DrawMap;
+		break;
 	default:
 		return false;
 	}
@@ -386,9 +438,11 @@ bool Geo3DViewForm::HandleKeyPress(int Key)
 
 void Geo3DViewForm::PrintCurrentCoord(void)
 {
-	POINT Coord = { (LONG)floor(CameraPosition.x * (float)L2Geodata::GEO_COORDS_IN_WORLD_COORDS * (float)L2GeodataModelGenerator::InvScaleWorld), (LONG)floor(CameraPosition.y * (float)L2Geodata::GEO_COORDS_IN_WORLD_COORDS * (float)L2GeodataModelGenerator::InvScaleWorld) };
+	int32_t WorldX, WorldY, WorldZ;
 
-	cout << Coord.x << ", " << Coord.y << " | " << CameraPosition.z << endl;
+	ToInt(CameraPosition.x, CameraPosition.y, CameraPosition.z, WorldX, WorldY, WorldZ);
+
+	cout << WorldX << " " << WorldY << " " << WorldZ << endl;
 }
 
 void Geo3DViewForm::SwitchNSWETextureMode(void)
@@ -490,6 +544,33 @@ LRESULT Geo3DViewForm::WndProcCallback(HWND hWnd, UINT Msg, WPARAM wParam, LPARA
 
 // 3D Utils
 
+void Geo3DViewForm::CalcL2MapPosition(void)
+{
+	int32_t WorldX, WorldY, WorldZ;
+
+	ToInt(CameraPosition.x, CameraPosition.y, CameraPosition.z, WorldX, WorldY, WorldZ);
+
+	float X = (float)(WorldX - L2Geodata::MAP_MIN_X) / L2Geodata::GEO_COORDS_IN_WORLD_COORDS / L2Geodata::GEO_REGION_SIZE;
+	float Y = (float)(WorldY - L2Geodata::MAP_MIN_Y) / L2Geodata::GEO_COORDS_IN_WORLD_COORDS / L2Geodata::GEO_REGION_SIZE;
+
+	X -= 5.0f;
+
+	X /= 11.0f;
+	Y /= 16.0f;
+
+	L2MapPlayerPosition = XMVectorSet(X, -Y, 0.0f, 1.0f);
+
+	// cout << "Debug padla: " << X << " " << Y << ", eban" << endl;
+}
+
+void Geo3DViewForm::UpdatePerframeShaderVariables(void)
+{
+	XMMATRIX InvWorldMatrix = XMMatrixTranspose(WorldMatrix);
+	XMStoreFloat4x4(&PerFrameShaderVariables.WorldMatrix, InvWorldMatrix);
+
+	DirectDeviceCtx->UpdateSubresource(PerFrameShaderVariablesRef, 0, NULL, &PerFrameShaderVariables, 0, 0);
+}
+
 void Geo3DViewForm::BuildViewMatrix(void)
 {
 	float x = sinf(CameraAngle.y) * sinf(CameraAngle.x);
@@ -504,23 +585,23 @@ void Geo3DViewForm::BuildViewMatrix(void)
 	ViewMatrix = XMMatrixLookAtLH(Position, Target, Up);
 }
 
-void Geo3DViewForm::BuildWorldMatrix(void)
+void Geo3DViewForm::BuildOrthogonalMatrix(unsigned int Width, unsigned int Height)
 {
-	WorldMatrix = XMMatrixIdentity();
+	OrthogonalMatrix = XMMatrixOrthographicLH((float)Width, (float)Height, 0.0, 0.5);
 }
 
-void Geo3DViewForm::UpdateShaderVariables(void)
+void Geo3DViewForm::UpdatePersistentShaderVariables(void)
 {
-	XMMATRIX InvWorldMatrix = XMMatrixTranspose(WorldMatrix);
-	XMStoreFloat4x4(&ShaderMatrices.WorldMatrix, InvWorldMatrix);
+	XMMATRIX FinalMatrix = XMMatrixTranspose(ViewMatrix * ProjectionMatrix);
+	XMStoreFloat4x4(&PersistentShaderVariables.FinalMatrix, FinalMatrix);
 
-	XMMATRIX FinalMatrix = XMMatrixTranspose(WorldMatrix * ViewMatrix * ProjectionMatrix);
-	XMStoreFloat4x4(&ShaderMatrices.FinalMatrix, FinalMatrix);
+	XMMATRIX InvOrthogonalMatrix = XMMatrixTranspose(OrthogonalMatrix);
+	XMStoreFloat4x4(&PersistentShaderVariables.OrthogonalMatrix, InvOrthogonalMatrix);
 
-	DirectDeviceCtx->UpdateSubresource(ShaderMatricesRef, 0, NULL, &ShaderMatrices, 0, 0);
+	DirectDeviceCtx->UpdateSubresource(PersistentShaderVariablesRef, 0, NULL, &PersistentShaderVariables, 0, 0);
 }
 
-void Geo3DViewForm::GenerateWhitePixelTexture(void)
+void Geo3DViewForm::GenerateSingleColorTextures(void)
 {
 	HRESULT res;
 
@@ -536,17 +617,25 @@ void Geo3DViewForm::GenerateWhitePixelTexture(void)
 	TextureDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
 	TextureDesc.CPUAccessFlags = 0;
 
-	uint32_t WhitePixel = 0x00FFFFFF;
+	uint32_t SinglePixel;
 
 	D3D11_SUBRESOURCE_DATA InitialData = { };
-	InitialData.pSysMem = &WhitePixel;
-	InitialData.SysMemPitch = sizeof(WhitePixel);
+	InitialData.pSysMem = &SinglePixel;
+	InitialData.SysMemPitch = sizeof(SinglePixel);
 
-	res = DirectDevice->CreateTexture2D(&TextureDesc, &InitialData, &WhitePixelTexture);
+	SinglePixel = 0x00FFFFFF;
+	res = DirectDevice->CreateTexture2D(&TextureDesc, &InitialData, &WhiteTexture);
 	if (FAILED(res))
 		throw new runtime_error("Couldn't create white pixel texture");
+	res = DirectDevice->CreateShaderResourceView(WhiteTexture, NULL, &WhiteTextureView);
+	if (FAILED(res))
+		throw new runtime_error("Couldn't create white pixel shader view");
 
-	res = DirectDevice->CreateShaderResourceView(WhitePixelTexture, NULL, &WhitePixelView);
+	SinglePixel = 0xFFFF0000;
+	res = DirectDevice->CreateTexture2D(&TextureDesc, &InitialData, &RedTexture);
+	if (FAILED(res))
+		throw new runtime_error("Couldn't create white pixel texture");
+	res = DirectDevice->CreateShaderResourceView(RedTexture, NULL, &RedTextureView);
 	if (FAILED(res))
 		throw new runtime_error("Couldn't create white pixel shader view");
 }
@@ -602,6 +691,60 @@ void Geo3DViewForm::GenerateNSWETexture(void)
 	DirectDeviceCtx->PSSetShaderResources(1, 1, &NSWEView);
 }
 
+void Geo3DViewForm::LoadL2Map(unsigned int Width, unsigned int Height)
+{
+	CoInitialize(NULL);
+
+	HRESULT res;
+
+	res = CreateWICTextureFromFile(DirectDevice, L"l2worldmap.bmp", (ID3D11Resource**)&L2MapTexture, &L2MapTextureView);
+	if (FAILED(res)) {
+		cout << "Couldn't load L2 Map Texture, check if l2worldmap.jpg exists " << res << endl;
+		return;
+	}
+
+	D3D11_TEXTURE2D_DESC Desc;
+	L2MapTexture->GetDesc(&Desc);
+
+	L2MapScreenPoint = XMVectorSet((float)Width / 2 - Desc.Width, -((float)Height / 2 - Desc.Height), 0.0f, 1.0f);
+	L2MapScale = XMVectorSet((float)Desc.Width, (float)Desc.Height, 1.0f, 1.0f);
+
+	GeodataVertex Rect[4 + 3] = { };
+
+	Rect[0].Pos = { 0,  0, 0.0f };
+	Rect[1].Pos = { 1,  0, 0.0f };
+	Rect[2].Pos = { 0, -1, 0.0f };
+	Rect[3].Pos = { 1, -1, 0.0f };
+
+	Rect[0].Tex = { -(1 + 1), -(1 + 1) };
+	Rect[1].Tex = { -(0 + 1), -(1 + 1) };
+	Rect[2].Tex = { -(1 + 1), -(0 + 1) };
+	Rect[3].Tex = { -(0 + 1), -(0 + 1) };
+
+	double Angle = M_PI / 2;
+	for (int Index = 6; Index >= 4; Index--) {
+
+		float Len = Index == 6 ? 1.5f : 1.0f;
+
+		Rect[Index].Pos = { (float)cos(Angle) * Len, (float)sin(Angle) * Len, 0.0f };
+		Rect[Index].Tex = { -1, -1 };
+
+		Angle += M_PI / 1.5;
+	}
+	
+	D3D11_SUBRESOURCE_DATA InitialData = { };
+
+	// creating buffers
+	D3D11_BUFFER_DESC VertexBufferDesc = { };
+	VertexBufferDesc.ByteWidth = sizeof(Rect);
+	VertexBufferDesc.Usage = D3D11_USAGE_DEFAULT;
+	VertexBufferDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+	InitialData.pSysMem = &Rect;
+	res = DirectDevice->CreateBuffer(&VertexBufferDesc, &InitialData, &L2MapVertices);
+	if (FAILED(res))
+		throw new runtime_error("Couldn't create l2 map rect vertex buffer");
+}
+
 void Geo3DViewForm::WaitForNextFrame(void)
 {
 	HRESULT res;
@@ -638,8 +781,13 @@ void Geo3DViewForm::DrawScene(void)
 	if (NSWETextureEnabled)
 		DirectDeviceCtx->PSSetShaderResources(1, 1, &NSWEView);
 	else
-		DirectDeviceCtx->PSSetShaderResources(1, 1, &WhitePixelView);
+		DirectDeviceCtx->PSSetShaderResources(1, 1, &WhiteTextureView);
 
+	WorldMatrix = XMMatrixIdentity();
+	UpdatePerframeShaderVariables();
+
+	DirectDeviceCtx->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	DirectDeviceCtx->OMSetDepthStencilState(DepthStencilState3D, 0);
 	for (int X = -1; X <= 1; X++)
 		for (int Y = -1; Y <= 1; Y++) {
 
@@ -650,9 +798,8 @@ void Geo3DViewForm::DrawScene(void)
 				if (!NSWETextureEnabled && Model->TextureView != NULL)
 					DirectDeviceCtx->PSSetShaderResources(0, 1, &Model->TextureView);
 				else
-					DirectDeviceCtx->PSSetShaderResources(0, 1, &WhitePixelView);
+					DirectDeviceCtx->PSSetShaderResources(0, 1, &WhiteTextureView);
 
-				// TODO
 				UINT stride = sizeof(GeodataVertex);
 				UINT offset = 0;
 				DirectDeviceCtx->IASetVertexBuffers(0, 1, &Model->VertexBuffer, &stride, &offset);
@@ -662,6 +809,27 @@ void Geo3DViewForm::DrawScene(void)
 				DirectDeviceCtx->DrawIndexed(Model->IndexCount, 0, 0);
 			}
 		}
+
+	if (DrawMap) {
+
+		DirectDeviceCtx->OMSetDepthStencilState(DepthStencilState2D, 0);
+		DirectDeviceCtx->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+		UINT stride = sizeof(GeodataVertex);
+		UINT offset = 0;
+		DirectDeviceCtx->IASetVertexBuffers(0, 1, &L2MapVertices, &stride, &offset);
+
+		WorldMatrix = XMMatrixAffineTransformation2D(L2MapScale, XMVectorSet(0, 0, 0, 1), 0, L2MapScreenPoint);
+		UpdatePerframeShaderVariables();
+
+		DirectDeviceCtx->PSSetShaderResources(0, 1, &L2MapTextureView);
+		DirectDeviceCtx->Draw(4, 0);
+
+		WorldMatrix = XMMatrixAffineTransformation2D(XMVectorSet(10, 10, 1, 1), XMVectorSet(0, 0, 0, 1), CameraAngle.x - M_PI, L2MapScreenPoint + (L2MapPlayerPosition * L2MapScale));
+		UpdatePerframeShaderVariables();
+
+		DirectDeviceCtx->PSSetShaderResources(0, 1, &RedTextureView);
+		DirectDeviceCtx->Draw(3, 4);
+	}
 
 	if (SyncQuery != NULL)
 		DirectDeviceCtx->End(SyncQuery);
@@ -679,14 +847,33 @@ void Geo3DViewForm::Tick(double dt) {
 
 // Scene loader
 
+float Geo3DViewForm::ToScene(float F)
+{
+	return F * ScaleWorld;
+}
+
+void Geo3DViewForm::ToScene(int X, int Y, int Z, float & FX, float & FY, float & FZ)
+{
+	FX = (float)X * ScaleWorld;
+	FY = (float)Y * ScaleWorld;
+	FZ = (float)Z * ScaleWorldZ;
+}
+
+void Geo3DViewForm::ToInt(float FX, float FY, float FZ, int32_t& X, int32_t& Y, int32_t& Z)
+{
+	X = (int)floor(FX / ScaleWorld * L2Geodata::GEO_COORDS_IN_WORLD_COORDS);
+	Y = (int)floor(FY / ScaleWorld * L2Geodata::GEO_COORDS_IN_WORLD_COORDS);
+	Z = (int)floor(FZ / ScaleWorldZ);
+}
+
 void Geo3DViewForm::TeleportTo(int WorldX, int WorldY, int WorldZ)
 {
-	CameraPosition.x = ((float)(WorldX / L2Geodata::GEO_COORDS_IN_WORLD_COORDS) + 0.5f) / (float)L2GeodataModelGenerator::InvScaleWorld;
-	CameraPosition.y = ((float)(WorldY / L2Geodata::GEO_COORDS_IN_WORLD_COORDS) + 0.5f) / (float)L2GeodataModelGenerator::InvScaleWorld;
-	CameraPosition.z = (float)WorldZ  / (float)L2GeodataModelGenerator::InvScaleZ;
+	ToScene(WorldX / L2Geodata::GEO_COORDS_IN_WORLD_COORDS, WorldY / L2Geodata::GEO_COORDS_IN_WORLD_COORDS, WorldZ,
+		CameraPosition.x, CameraPosition.y, CameraPosition.z);
 
+	CalcL2MapPosition();
 	BuildViewMatrix();
-	UpdateShaderVariables();
+	UpdatePersistentShaderVariables();
 
 	CheckRegions(true);
 }
@@ -764,7 +951,9 @@ void Geo3DViewForm::ScheduleRegionLoad(RegionModel* Region, int RegionX, int Reg
 		Generation->IsModelScheduled = true;
 	}
 
-	if (!Region->IsTextureDone && !Generation->IsTextureScheduled) {
+	if (!Region->IsTextureDone && !Generation->IsTextureScheduled && AvailableTexturesLoadCount > 0) {
+
+		AvailableTexturesLoadCount--;
 
 		ScheduleTextureLoad(RegionX, RegionY, 0);
 
@@ -792,7 +981,7 @@ void Geo3DViewForm::ScheduleRegions(void)
 
 void Geo3DViewForm::CheckRegions(bool ForceSchedule)
 {
-	POINT CurrentRegion = { (int)floor(CameraPosition.x * (float)L2GeodataModelGenerator::InvScaleWorld / (float)REGION_SIZE), (int)floor(CameraPosition.y * (float)L2GeodataModelGenerator::InvScaleWorld / (float)REGION_SIZE) };
+	POINT CurrentRegion = { (int)floor(CameraPosition.x / ScaleWorld / REGION_SIZE), (int)floor(CameraPosition.y / ScaleWorld / REGION_SIZE) };
 	POINT Direction = SubtractPoint(CurrentRegion, CenterRegion);
 
 	if (Direction.x != 0 || Direction.y != 0) {
@@ -848,7 +1037,7 @@ void Geo3DViewForm::ModelGenerationWork(ModelGenerationRequest* Request)
 	Request->VertexCount = MAX_VERTICES;
 	Request->IndexCount = MAX_INDEXES;
 
-	Generator.GenerateGeodataScene(WorldX, WorldY, 1 * REGION_TO_WORLD, 1 * REGION_TO_WORLD, 
+	Generator.GenerateGeodataScene(WorldX, WorldY, 1 * REGION_TO_WORLD, 1 * REGION_TO_WORLD, ScaleWorld, ScaleWorldZ,
 		Request->Buffer.VertexBuffer, Request->VertexCount, Request->Buffer.IndexBuffer, Request->IndexCount);
 
 	if (Request->VertexCount > 0) {
@@ -986,7 +1175,7 @@ void Geo3DViewForm::ReadModelGenerationResult(ModelGenerationRequest* Request)
 
 	CleanupGeneration(GenerationIndex);
 
-	// there might be some reginos waiting for buffer we just returned
+	// there might be some regions waiting for buffer we just returned
 	ScheduleRegions();
 }
 
@@ -1032,11 +1221,17 @@ void Geo3DViewForm::ReadTextureLoadResult(TextureLoadRequest* Request)
 			Request->TextureView->Release();
 	}
 
+	// return terxtures to pool
+	AvailableTexturesLoadCount++;
+
 	// request is done now
 
 	delete Request;
 
 	CleanupGeneration(GenerationIndex);
+
+	// there might be some regions waiting for buffer we just returned
+	ScheduleRegions();
 }
 
 // Loader Callbacks
