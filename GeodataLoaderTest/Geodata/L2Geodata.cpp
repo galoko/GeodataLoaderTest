@@ -575,6 +575,24 @@ bool L2Geodata::GetWallLayerIndex(int16_t SubBlock, int OffsetX, int OffsetY, in
 	return WallRequired;
 }
 
+bool L2Geodata::GetGroundSubBlock(int32_t WorldX, int32_t WorldY, int32_t WorldZ, int16_t& GroundSubBlock)
+{
+	int16_t LayersCount;
+	int16_t* Layers = GetSubBlocks(WorldX, WorldY, LayersCount);
+
+	for (int16_t LayerIndex = 0; LayerIndex < LayersCount; LayerIndex++) {
+
+		int16_t SubBlock = Layers[LayerIndex];
+
+		if (GET_GEO_HEIGHT(SubBlock) <= WorldZ + MIN_LAYER_DIFF) {
+			GroundSubBlock = SubBlock;
+			return true;
+		}
+	}
+
+	return false;
+}
+
 // Utils
 
 int OffsetToNSWE(int OffsetX, int OffsetY) {

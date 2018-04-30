@@ -171,6 +171,7 @@
     <ClInclude Include="GeodataLoaderTest.h" />
     <ClInclude Include="Geodata\L2Geodata.h" />
     <ClInclude Include="Geodata\L2GeodataModelGenerator.h" />
+    <ClInclude Include="Geodata\L2GeodataPathFind.h" />
     <ClInclude Include="stdafx.h" />
     <ClInclude Include="targetver.h" />
     <ClInclude Include="Utils\ColorUtils.h" />
@@ -185,6 +186,7 @@
     <ClCompile Include="GeodataLoaderTest.cpp" />
     <ClCompile Include="Geodata\L2Geodata.cpp" />
     <ClCompile Include="Geodata\L2GeodataModelGenerator.cpp" />
+    <ClCompile Include="Geodata\L2GeodataPathFind.cpp" />
     <ClCompile Include="stdafx.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>

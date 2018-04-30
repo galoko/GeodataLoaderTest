@@ -312,7 +312,7 @@ void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowC
 
 	GenerateNSWETexture();
 	LoadL2Map(Width, Height);
-	GeneratePathFindMarkers();
+	GeneratePathFindMarkerModel();
 
 	// Scale
 
@@ -327,16 +327,27 @@ void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowC
 
 	BuildOrthogonalMatrix(Width, Height);
 
+	// path finding
+
+	StartMarker = -1;
+	FinishMarker = -1;
+
 	// setup camera
 
 	Up = XMVectorSet(0, 0, 1, 1);
 
+	LoadState();
+	/*
 	// TODO save camera and position to a file
 	CameraAngle.y = 3;
 	CameraAngle.x = 0;
 
 	// initial position
 	TeleportTo(13100, 140572, -2695);
+	// TeleportTo(115143, -179224, 8932);
+
+	// SaveState();
+	*/
 }
 
 // Window and Input events processing
@@ -439,8 +450,23 @@ bool Geo3DViewForm::HandleKeyPress(int Key)
 	case 'V':
 		UseVSync = !UseVSync;
 		break;
+	case 'I':
+		SetPathFindStart();
+		break;
+	case 'O':
+		SetPathFindFinish();
+		break;
+	case 'P':
+		FindPath();
+		break;
 	case 'M':
 		DrawMap = !DrawMap;
+		break;
+	case VK_F5:
+		SaveState();
+		break;
+	case VK_F9:
+		LoadState();
 		break;
 	default:
 		return false;
@@ -453,7 +479,7 @@ void Geo3DViewForm::PrintCurrentCoord(void)
 {
 	int32_t WorldX, WorldY, WorldZ;
 
-	ToInt(CameraPosition.x, CameraPosition.y, CameraPosition.z, WorldX, WorldY, WorldZ);
+	ToWorld(CameraPosition.x, CameraPosition.y, CameraPosition.z, WorldX, WorldY, WorldZ);
 
 	cout << WorldX << " " << WorldY << " " << WorldZ << endl;
 }
@@ -531,6 +557,14 @@ LRESULT Geo3DViewForm::WndProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam
 			ReadTextureLoadResult((TextureLoadRequest*)lParam);
 			break;
 		}
+		case ID_PATH_FIND: {
+			ReadPathFindResult((PathFindRequest*)lParam);
+			break;
+		}
+		case ID_PATH_FIND_DEBUG: {
+			ReadPathFindDebug((L2GeodataPathFind*)lParam);
+			break;
+		}
 		default:
 			cout << "Unknown scheduled result ID: " << ID << endl;
 			break;
@@ -558,7 +592,7 @@ void Geo3DViewForm::CalcL2MapPosition(void)
 {
 	int32_t WorldX, WorldY, WorldZ;
 
-	ToInt(CameraPosition.x, CameraPosition.y, CameraPosition.z, WorldX, WorldY, WorldZ);
+	ToWorld(CameraPosition.x, CameraPosition.y, CameraPosition.z, WorldX, WorldY, WorldZ);
 
 	float X = (float)(WorldX - L2Geodata::MAP_MIN_X) / L2Geodata::GEO_COORDS_IN_WORLD_COORDS / L2Geodata::GEO_REGION_SIZE;
 	float Y = (float)(WorldY - L2Geodata::MAP_MIN_Y) / L2Geodata::GEO_COORDS_IN_WORLD_COORDS / L2Geodata::GEO_REGION_SIZE;
@@ -569,8 +603,6 @@ void Geo3DViewForm::CalcL2MapPosition(void)
 	Y /= 16.0f;
 
 	L2MapPlayerPosition = XMVectorSet(X, -Y, 0.0f, 1.0f);
-
-	// cout << "Debug padla: " << X << " " << Y << ", eban" << endl;
 }
 
 void Geo3DViewForm::UpdateAllPerDrawVariables(void)
@@ -718,16 +750,21 @@ void Geo3DViewForm::LoadL2Map(unsigned int Width, unsigned int Height)
 		throw new runtime_error("Couldn't create l2 map rect vertex buffer");
 }
 
-void Geo3DViewForm::GeneratePathFindMarkers(void)
+void Geo3DViewForm::GeneratePathFindMarkerModel(void)
 {
 	HRESULT res;
 
-	GeodataVertex Rect[4] = {};
+	GeodataVertex Rect[4] = { };
 
 	Rect[0].Pos = { 0,  0, 0.0f };
 	Rect[1].Pos = { 1,  0, 0.0f };
 	Rect[2].Pos = { 0,  1, 0.0f };
 	Rect[3].Pos = { 1,  1, 0.0f };
+
+	Rect[0].Tex = { 0, 0 };
+	Rect[1].Tex = { 0, 0 };
+	Rect[2].Tex = { 0, 0 };
+	Rect[3].Tex = { 0, 0 };
 
 	D3D11_SUBRESOURCE_DATA InitialData = {};
 
@@ -739,7 +776,7 @@ void Geo3DViewForm::GeneratePathFindMarkers(void)
 	InitialData.pSysMem = &Rect;
 	res = DirectDevice->CreateBuffer(&VertexBufferDesc, &InitialData, &PathFindMarkerBuffer);
 	if (FAILED(res))
-		throw new runtime_error("Couldn't create marker vertex buffer");
+		throw new runtime_error("Couldn't create path find marker vertex buffer");
 }
 
 void Geo3DViewForm::WaitForNextFrame(void)
@@ -768,6 +805,11 @@ void Geo3DViewForm::WaitForNextFrame(void)
 	}
 }
 
+float BoolToFloat(bool B) {
+	
+	return B ? 1.0f : 0.0f;
+}
+
 void Geo3DViewForm::DrawScene(void)
 {
 	// clear the back buffer to a deep blue
@@ -778,13 +820,15 @@ void Geo3DViewForm::DrawScene(void)
 	DirectDeviceCtx->PSSetShaderResources(1, 1, &NSWEView);
 
 	WorldMatrix = XMMatrixIdentity();
-	PerDrawVertexVariables.IsOrthogonal = 0.0f;
-	PerDrawPixelVariables.IsOrthogonal = 0.0f;
-	PerDrawPixelVariables.LightEnabled = NSWETextureEnabled;
-	PerDrawPixelVariables.UseNSWE = NSWETextureEnabled;
-	PerDrawPixelVariables.UseStaticColor = NSWETextureEnabled;
+	PerDrawVertexVariables.IsOrthogonal = BoolToFloat(false);
+	PerDrawPixelVariables.IsOrthogonal = BoolToFloat(false);
+	PerDrawPixelVariables.LightEnabled = BoolToFloat(NSWETextureEnabled);
+	PerDrawPixelVariables.UseNSWE = BoolToFloat(NSWETextureEnabled);
+	PerDrawPixelVariables.UseStaticColor = BoolToFloat(NSWETextureEnabled);
 	PerDrawPixelVariables.StaticColor = { 1, 1, 1 };
 	UpdateAllPerDrawVariables();
+
+	uint32_t TotalVertexCount = 0;
 
 	DirectDeviceCtx->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 	DirectDeviceCtx->OMSetDepthStencilState(DepthStencilState3D, 0);
@@ -799,17 +843,17 @@ void Geo3DViewForm::DrawScene(void)
 
 					DirectDeviceCtx->PSSetShaderResources(0, 1, &Model->TextureView);
 
-					if (PerDrawPixelVariables.UseStaticColor != NSWETextureEnabled || PerDrawPixelVariables.LightEnabled != NSWETextureEnabled) {
-						PerDrawPixelVariables.UseStaticColor = NSWETextureEnabled;
-						PerDrawPixelVariables.LightEnabled = NSWETextureEnabled;
+					if (PerDrawPixelVariables.UseStaticColor != BoolToFloat(NSWETextureEnabled) || PerDrawPixelVariables.LightEnabled != BoolToFloat(NSWETextureEnabled)) {
+						PerDrawPixelVariables.UseStaticColor = BoolToFloat(NSWETextureEnabled);
+						PerDrawPixelVariables.LightEnabled = BoolToFloat(NSWETextureEnabled);
 						UpdateAllPerDrawVariables();
 					}
 				}
 				else {
 
-					if (PerDrawPixelVariables.UseStaticColor != true || PerDrawPixelVariables.LightEnabled != true) {
-						PerDrawPixelVariables.UseStaticColor = true;
-						PerDrawPixelVariables.LightEnabled = true;
+					if (PerDrawPixelVariables.UseStaticColor != BoolToFloat(true) || PerDrawPixelVariables.LightEnabled != BoolToFloat(true)) {
+						PerDrawPixelVariables.UseStaticColor = BoolToFloat(true);
+						PerDrawPixelVariables.LightEnabled = BoolToFloat(true);
 						UpdateAllPerDrawVariables();
 					}
 				}
@@ -821,15 +865,41 @@ void Geo3DViewForm::DrawScene(void)
 				DirectDeviceCtx->IASetIndexBuffer(Model->IndexBuffer, DXGI_FORMAT_R32_UINT, 0);
 
 				DirectDeviceCtx->DrawIndexed(Model->IndexCount, 0, 0);
+
+				TotalVertexCount += Model->VertexCount;
 			}
 		}
 
+	if (PathFindMarkers.size() > 0) {
+		PerDrawVertexVariables.IsOrthogonal = BoolToFloat(false);
+		PerDrawPixelVariables.IsOrthogonal = BoolToFloat(false);
+		PerDrawPixelVariables.LightEnabled = BoolToFloat(false);
+		PerDrawPixelVariables.UseNSWE = BoolToFloat(false);
+
+		DirectDeviceCtx->OMSetDepthStencilState(DepthStencilState3D, 0);
+		DirectDeviceCtx->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+		UINT stride = sizeof(GeodataVertex);
+		UINT offset = 0;
+		DirectDeviceCtx->IASetVertexBuffers(0, 1, &PathFindMarkerBuffer, &stride, &offset);
+
+		PerDrawPixelVariables.UseStaticColor = BoolToFloat(true);
+
+		for (PathFindMarker& Marker : PathFindMarkers) {
+
+			PerDrawPixelVariables.StaticColor = Marker.Color;
+			WorldMatrix = Marker.WorldMatrix;
+			UpdateAllPerDrawVariables();
+
+			DirectDeviceCtx->Draw(4, 0);
+		}
+	}
+
 	if (DrawMap) {
 
-		PerDrawVertexVariables.IsOrthogonal = 1.0f;
-		PerDrawPixelVariables.IsOrthogonal = 1.0f;
-		PerDrawPixelVariables.LightEnabled = false;
-		PerDrawPixelVariables.UseNSWE = false;
+		PerDrawVertexVariables.IsOrthogonal = BoolToFloat(true);
+		PerDrawPixelVariables.IsOrthogonal = BoolToFloat(true);
+		PerDrawPixelVariables.LightEnabled = BoolToFloat(false);
+		PerDrawPixelVariables.UseNSWE = BoolToFloat(false);
 
 		DirectDeviceCtx->OMSetDepthStencilState(DepthStencilState2D, 0);
 		DirectDeviceCtx->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
@@ -837,14 +907,14 @@ void Geo3DViewForm::DrawScene(void)
 		UINT offset = 0;
 		DirectDeviceCtx->IASetVertexBuffers(0, 1, &L2MapVertices, &stride, &offset);
 
-		PerDrawPixelVariables.UseStaticColor = false;
+		PerDrawPixelVariables.UseStaticColor = BoolToFloat(false);
 		WorldMatrix = XMMatrixAffineTransformation2D(L2MapScale, XMVectorSet(0, 0, 0, 1), 0, L2MapScreenPoint);
 		UpdateAllPerDrawVariables();
 
 		DirectDeviceCtx->PSSetShaderResources(0, 1, &L2MapTextureView);
 		DirectDeviceCtx->Draw(4, 0);
 
-		PerDrawPixelVariables.UseStaticColor = true;
+		PerDrawPixelVariables.UseStaticColor = BoolToFloat(true);
 		PerDrawPixelVariables.StaticColor = { 1, 0, 0 };
 		WorldMatrix = XMMatrixAffineTransformation2D(XMVectorSet(10, 10, 1, 1), XMVectorSet(0, 0, 0, 1), CameraAngle.x - (float)M_PI, L2MapScreenPoint + (L2MapPlayerPosition * L2MapScale));
 		UpdateAllPerDrawVariables();
@@ -880,14 +950,14 @@ void Geo3DViewForm::ToScene(int X, int Y, int Z, float & FX, float & FY, float &
 	FZ = (float)Z * ScaleWorldZ;
 }
 
-void Geo3DViewForm::ToInt(float FX, float FY, float FZ, int32_t& X, int32_t& Y, int32_t& Z)
+void Geo3DViewForm::ToWorld(float FX, float FY, float FZ, int32_t& X, int32_t& Y, int32_t& Z)
 {
 	X = (int)floor(FX / ScaleWorld * L2Geodata::GEO_COORDS_IN_WORLD_COORDS);
 	Y = (int)floor(FY / ScaleWorld * L2Geodata::GEO_COORDS_IN_WORLD_COORDS);
 	Z = (int)floor(FZ / ScaleWorldZ);
 }
 
-void Geo3DViewForm::TeleportTo(int WorldX, int WorldY, int WorldZ)
+void Geo3DViewForm::TeleportTo(int32_t WorldX, int32_t WorldY, int32_t WorldZ)
 {
 	ToScene(WorldX / L2Geodata::GEO_COORDS_IN_WORLD_COORDS, WorldY / L2Geodata::GEO_COORDS_IN_WORLD_COORDS, WorldZ,
 		CameraPosition.x, CameraPosition.y, CameraPosition.z);
@@ -898,6 +968,192 @@ void Geo3DViewForm::TeleportTo(int WorldX, int WorldY, int WorldZ)
 
 	CheckRegions(true);
 }
+
+// Path finding
+
+int32_t Geo3DViewForm::SetPathFindMarker(int32_t ExistingMarker, int32_t WorldX, int32_t WorldY, int32_t WorldZ, uint8_t R, uint8_t G, uint8_t B)
+{
+	float X, Y, Z;
+	ToScene(WorldX / L2Geodata::GEO_COORDS_IN_WORLD_COORDS, WorldY / L2Geodata::GEO_COORDS_IN_WORLD_COORDS, WorldZ,
+		X, Y, Z);
+
+	const static float Epsilon = 1.0f * ScaleWorldZ;
+
+	PathFindMarker Marker;
+	Marker.WorldMatrix = XMMatrixScaling(ScaleWorld, ScaleWorld, 1.0f) * XMMatrixTranslation(X, Y, Z + Epsilon);
+	Marker.Color = { R / 255.0f, G / 255.0f, B / 255.0f };
+
+	if (ExistingMarker == -1) {
+		PathFindMarkers.push_back(Marker);
+		ExistingMarker = (int32_t)PathFindMarkers.size() - 1;
+	}
+	else
+		PathFindMarkers[ExistingMarker] = Marker;
+
+	return ExistingMarker;
+}
+
+void Geo3DViewForm::DeletePathFindMarker(int32_t& Marker)
+{
+	if (Marker != -1) {
+		PathFindMarkers.erase(PathFindMarkers.begin() + Marker);
+		Marker = -1;
+	}
+}
+
+void Geo3DViewForm::UpdatePathFindMarkers(void)
+{
+	PathFindMarkers.clear();
+	StartMarker = -1;
+	FinishMarker = -1;
+
+	if (!PathFindInProgress) {
+		if (HaveStart)
+			StartMarker = SetPathFindMarker(StartMarker, Start.x, Start.y, Start.z, 0, 0, 255);
+
+		if (HaveFinish)
+			FinishMarker = SetPathFindMarker(FinishMarker, Finish.x, Finish.y, Finish.z, 255, 0, 0);
+
+		if (Path.size() > 2)
+			for (int Index = 0; Index < Path.size() - 1; Index++) {
+
+				XMINT3* Point = &Path[Index];
+
+				SetPathFindMarker(-1, Point->x, Point->y, Point->z, 228, 124, 255);
+			}
+	}
+	else {
+		for (XMINT3& Point : PointsToCheck)
+			SetPathFindMarker(-1, Point.x, Point.y, Point.z, 0, 255, 0);
+
+		for (XMINT3& Point : CheckedPoints)
+			SetPathFindMarker(-1, Point.x, Point.y, Point.z, 255, 255, 0);
+	}
+}
+
+bool Geo3DViewForm::GetCurrentGroundCoords(int32_t& WorldX, int32_t& WorldY, int32_t& WorldZ)
+{
+	ToWorld(CameraPosition.x, CameraPosition.y, CameraPosition.z, WorldX, WorldY, WorldZ);
+
+	int16_t GroundSubBlock;
+	if (!L2Geodata::GetGroundSubBlock(WorldX, WorldY, WorldZ, GroundSubBlock))
+		return false;
+
+	WorldZ = GET_GEO_HEIGHT(GroundSubBlock);
+
+	return true;
+}
+
+void Geo3DViewForm::SetPathFindStart(void)
+{
+	int32_t WorldX, WorldY, WorldZ;
+	if (!GetCurrentGroundCoords(WorldX, WorldY, WorldZ))
+		return;
+
+	Start = { WorldX, WorldY, WorldZ };
+	HaveStart = true;
+
+	UpdatePathFindMarkers();
+
+	// FindPath();
+}
+
+void Geo3DViewForm::SetPathFindFinish(void)
+{
+	int32_t WorldX, WorldY, WorldZ;
+	if (!GetCurrentGroundCoords(WorldX, WorldY, WorldZ))
+		return;
+
+	Finish = { WorldX, WorldY, WorldZ };
+	HaveFinish = true;
+
+	UpdatePathFindMarkers();
+
+	// FindPath();
+}
+
+void Geo3DViewForm::FindPath(void)
+{
+	if (HaveStart && HaveFinish) {
+
+		if (!PathFindInProgress) {
+
+			PathFindRequest* Request = new PathFindRequest();
+			Request->Start = Start;
+			Request->Finish = Finish;
+
+			PTP_WORK Work = CreateThreadpoolWork(PathFindWorkCallback, (PVOID)Request, NULL);
+			if (Work == NULL)
+				throw new runtime_error("Couldn't create model generation work");
+
+			SubmitThreadpoolWork(Work);
+			CloseThreadpoolWork(Work);
+
+			PathFindInProgress = true;
+		}
+		else
+			PathFindScheduled = true;
+	}
+}
+
+// State load/save
+
+void Geo3DViewForm::LoadState(void)
+{
+	FILE* StateFile = NULL;
+	fopen_s(&StateFile, "state.bin", "r");
+	if (StateFile == NULL)
+		return;
+
+	// GUI
+	fread(&CameraPosition, sizeof(CameraPosition), 1, StateFile);
+	fread(&CameraAngle, sizeof(CameraAngle), 1, StateFile);
+	fread(&MoveSpeed, sizeof(MoveSpeed), 1, StateFile);
+
+	// path finding
+	fread(&HaveStart, sizeof(HaveStart), 1, StateFile);
+	fread(&Start, sizeof(Start), 1, StateFile);
+	fread(&HaveFinish, sizeof(HaveFinish), 1, StateFile);
+	fread(&Finish, sizeof(Finish), 1, StateFile);
+
+	fclose(StateFile);
+
+	UpdatePathFindMarkers();
+
+	BuildViewMatrix();
+	UpdatePersistentVertexVariables();
+
+	CalcL2MapPosition();
+
+	CheckRegions();
+
+	// FindPath();
+}
+
+void Geo3DViewForm::SaveState(void)
+{
+	FILE* StateFile = NULL;
+	fopen_s(&StateFile, "state.bin", "w");
+	if (StateFile == NULL) {
+		cout << "failed to save state" << endl;
+		return;
+	}
+
+	// GUI
+	fwrite(&CameraPosition, sizeof(CameraPosition), 1, StateFile);
+	fwrite(&CameraAngle, sizeof(CameraAngle), 1, StateFile);
+	fwrite(&MoveSpeed, sizeof(MoveSpeed), 1, StateFile);
+
+	// path finding
+	fwrite(&HaveStart, sizeof(HaveStart), 1, StateFile);
+	fwrite(&Start, sizeof(Start), 1, StateFile);
+	fwrite(&HaveFinish, sizeof(HaveFinish), 1, StateFile);
+	fwrite(&Finish, sizeof(Finish), 1, StateFile);
+
+	fclose(StateFile);
+}
+
+// General scene setup utils
 
 void Geo3DViewForm::ScheduleModelGeneration(int RegionX, int RegionY, ModelBuffer Buffer)
 {
@@ -993,7 +1249,7 @@ void Geo3DViewForm::ScheduleRegions(void)
 		{ 1, -1 }, { -1,  1 }
 	};
 
-	for (POINT Point : NeighborOrder) {
+	for (const POINT& Point : NeighborOrder) {
 
 		RegionModel* Region = &Regions[1 + Point.x][1 + Point.y];
 		ScheduleRegionLoad(Region, CenterRegion.x + Point.x, CenterRegion.y + Point.y);
@@ -1142,6 +1398,15 @@ void Geo3DViewForm::TextureLoadWork(TextureLoadRequest* Request)
 	PostMessage(WindowHandle, WM_SCHEDULED_RESULT, ID_TEXTURE_LOAD, (LPARAM)Request);
 }
 
+void Geo3DViewForm::PathFindWork(PathFindRequest* Request)
+{
+	L2GeodataPathFind Search;
+
+	Request->Found = Search.FindPath(Request->Start, Request->Finish, Request->Path, PathFindDebugCallback);
+
+	PostMessage(WindowHandle, WM_SCHEDULED_RESULT, ID_PATH_FIND, (LPARAM)Request);
+}
+
 void Geo3DViewForm::ReadModelGenerationResult(ModelGenerationRequest* Request)
 {
 	int GenerationIndex = GetGenerationIndexByRegion(Request->RegionX, Request->RegionY, false);
@@ -1255,6 +1520,50 @@ void Geo3DViewForm::ReadTextureLoadResult(TextureLoadRequest* Request)
 	ScheduleRegions();
 }
 
+void Geo3DViewForm::ReadPathFindResult(PathFindRequest* Request)
+{
+	if (!PathFindInProgress)
+		throw new runtime_error("Path find result came when there was no search in progress");
+
+	Path = Request->Path;
+	if (!Request->Found)
+		Path.clear();
+
+	if (Path.size() >= 2) {
+		
+		Start = Path[0];
+		Finish = Path[Path.size() - 1];
+	}
+
+	PathFindInProgress = false;
+
+	UpdatePathFindMarkers();
+
+	delete Request;
+
+	if (PathFindScheduled) {
+		PathFindScheduled = false;
+		FindPath();
+	}
+}
+
+void Geo3DViewForm::ReadPathFindDebug(L2GeodataPathFind* PathFind)
+{
+	PointsToCheck = PathFind->GetPointsToCheck();
+	CheckedPoints = PathFind->GetCheckedPoints();
+
+	UpdatePathFindMarkers();
+
+	cout << "debug call, " << PointsToCheck.size() << ", " << CheckedPoints.size() << endl;
+}
+
+uint32_t Geo3DViewForm::PathFindDebug(L2GeodataPathFind& PathFind)
+{
+	SendMessage(WindowHandle, WM_SCHEDULED_RESULT, ID_PATH_FIND_DEBUG, LPARAM(&PathFind));
+
+	return 0;
+}
+
 // Loader Callbacks
 
 VOID Geo3DViewForm::ModelGenerationWorkCallback(PTP_CALLBACK_INSTANCE Instance, PVOID Context, PTP_WORK Work)
@@ -1267,6 +1576,17 @@ VOID Geo3DViewForm::TextureLoadWorkCallback(PTP_CALLBACK_INSTANCE Instance, PVOI
 {
 	TextureLoadRequest* Request = (TextureLoadRequest*)Context;
 	Geo3DViewForm::GetInstance().TextureLoadWork(Request);
+}
+
+VOID Geo3DViewForm::PathFindWorkCallback(PTP_CALLBACK_INSTANCE Instance, PVOID Context, PTP_WORK Work)
+{
+	PathFindRequest* Request = (PathFindRequest*)Context;
+	Geo3DViewForm::GetInstance().PathFindWork(Request);
+}
+
+uint32_t Geo3DViewForm::PathFindDebugCallback(L2GeodataPathFind& PathFind)
+{
+	return Geo3DViewForm::GetInstance().PathFindDebug(PathFind);
 }
 
 // RegionModel

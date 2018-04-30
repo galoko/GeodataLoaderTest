@@ -136,7 +136,7 @@ private:
 
 	// Int to float conversion utils
 
-	void ToFloat(int X, int Y, int Z, float& FX, float& FY, float& FZ);
+	void ToFloat(int32_t X, int32_t Y, int32_t Z, float& FX, float& FY, float& FZ);
 
 	// Generation Grid
 

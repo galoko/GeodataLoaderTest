@@ -11,6 +11,7 @@
 
 #include "Geodata\L2Geodata.h"
 #include "Geodata\L2GeodataModelGenerator.h"
+#include "Geodata\L2GeodataPathFind.h"
 
 using namespace DirectX;
 
@@ -29,7 +30,6 @@ private:
 
 	// Window
 
-	unsigned int Width, Height;
 	HWND WindowHandle;
 
 	// DirectX 11 
@@ -158,6 +158,21 @@ private:
 
 	float ScaleWorld, ScaleWorldZ;
 
+	// Path finding
+
+	struct PathFindMarker {
+		XMMATRIX WorldMatrix;
+		XMFLOAT3 Color;
+	};
+
+	vector<PathFindMarker> PathFindMarkers;
+
+	bool HaveStart, HaveFinish, PathFindInProgress, PathFindScheduled;
+	XMINT3 Start, Finish;
+	vector<XMINT3> Path, PointsToCheck, CheckedPoints;
+
+	int32_t StartMarker, FinishMarker;
+
 	// GUI
 
 	XMFLOAT3 CameraPosition;
@@ -168,7 +183,7 @@ private:
 	bool DrawTrianglesAsLines;
 	bool UseVSync = true;
 	bool IsInFocus;
-	bool NSWETextureEnabled;
+	BOOL NSWETextureEnabled;
 	bool DrawMap;
 
 #define KEYS_COUNT 256
@@ -203,7 +218,7 @@ private:
 
 	void GenerateNSWETexture(void);
 	void LoadL2Map(unsigned int Width, unsigned int Height);
-	void GeneratePathFindMarkers(void);
+	void GeneratePathFindMarkerModel(void);
 
 	void DrawScene(void);
 
@@ -233,11 +248,42 @@ private:
 		ID3D11ShaderResourceView *TextureView;
 	};
 
+	struct PathFindRequest {
+
+		// input
+		XMINT3 Start, Finish;
+
+		// output
+		bool Found;
+		vector<XMINT3> Path;
+	};
+
 	float ToScene(float F);
 	void ToScene(int X, int Y, int Z, float& FX, float& FY, float& FZ);
-	void ToInt(float FX, float FY, float FZ, int32_t& X, int32_t& Y, int32_t& Z);
+	void ToWorld(float FX, float FY, float FZ, int32_t& X, int32_t& Y, int32_t& Z);
 
-	void TeleportTo(int WorldX, int WorldY, int WorldZ);
+	void TeleportTo(int32_t WorldX, int32_t WorldY, int32_t WorldZ);
+
+	// Path finding
+
+	int32_t SetPathFindMarker(int32_t ExistingMarker, int32_t WorldX, int32_t WorldY, int32_t WorldZ, uint8_t R, uint8_t G, uint8_t B);
+	void DeletePathFindMarker(int32_t& Marker);
+
+	void UpdatePathFindMarkers(void);
+
+	bool GetCurrentGroundCoords(int32_t &WorldX, int32_t &WorldY, int32_t &WorldZ);
+	void SetPathFindStart(void);
+	void SetPathFindFinish(void);
+
+	void FindPath(void);
+
+	// State load/save
+
+	void LoadState(void);
+	void SaveState(void);
+
+	// General scene setup utils
+
 	void ScheduleModelGeneration(int RegionX, int RegionY, ModelBuffer Buffer);
 	void ScheduleTextureLoad(int RegionX, int RegionY, int LayerIndex);
 	int GetGenerationIndexByRegion(int RegionX, int RegionY, bool AutoCreate);
@@ -249,15 +295,25 @@ private:
 	static const int WM_SCHEDULED_RESULT = WM_USER + 5;
 	static const int ID_MODEL_GENERATION = 1;
 	static const int ID_TEXTURE_LOAD     = 2;
+	static const int ID_PATH_FIND        = 3;
+	static const int ID_PATH_FIND_DEBUG  = 4;
 
 	void ModelGenerationWork(ModelGenerationRequest* Request);
 	void TextureLoadWork(TextureLoadRequest* Request);
+	void PathFindWork(PathFindRequest* Request);
 
 	void ReadModelGenerationResult(ModelGenerationRequest* Request);
 	void ReadTextureLoadResult(TextureLoadRequest* Request);
+	void ReadPathFindResult(PathFindRequest* Request);
+	void ReadPathFindDebug(L2GeodataPathFind* PathFind);
+
+	uint32_t PathFindDebug(L2GeodataPathFind& PathFind);
 
 	static VOID NTAPI ModelGenerationWorkCallback(PTP_CALLBACK_INSTANCE Instance, PVOID Context, PTP_WORK Work);
 	static VOID NTAPI TextureLoadWorkCallback(PTP_CALLBACK_INSTANCE Instance, PVOID Context, PTP_WORK Work);
+	static VOID NTAPI PathFindWorkCallback(PTP_CALLBACK_INSTANCE Instance, PVOID Context, PTP_WORK Work);
+
+	static uint32_t PathFindDebugCallback(L2GeodataPathFind& PathFind);
 public:
 	void Init(unsigned int Width, unsigned int Height, WCHAR *WindowClass, WCHAR *Title, HINSTANCE hInstance);
 	void Show(void);

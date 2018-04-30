@@ -59,7 +59,7 @@ PS_INPUT VS(VS_INPUT input)
     
     output.Pos = mul(float4(input.Pos, 1.0f), WorldMatrix);
     
-    if (IsOrthogonal_V > 0.5f)
+    if (IsOrthogonal_V)
         output.Pos = mul(output.Pos, OrthogonalMatrix);
     else
         output.Pos = mul(output.Pos, FinalMatrix);
@@ -94,17 +94,17 @@ float4 PS(PS_INPUT input) : SV_Target
     float4 Color;
 
     // texture or static color
-    if (input.Tex0.x < 0.0 || UseStaticColor > 0.5f)
+    if (input.Tex0.x < 0.0 || UseStaticColor)
         Color = float4(StaticColor, 1.0f);
     else
         Color = MainTexture.Sample(SmoothSampler, input.Tex0);
         
     // don't have texture or light is enabled for all
-    if (input.Tex0.x < 0.0 || LightEnabled > 0.5f)
+    if (input.Tex0.x < 0.0 || LightEnabled)
         Color = ApplyLight(Color, input.Normal);
     
     // then NSWE texture if any
-    if (input.Tex1.z >= 0.0 && UseNSWE > 0.5f) {
+    if (input.Tex1.z >= 0.0 && UseNSWE) {
         
         float Offset = input.Tex1.z;
         if (input.Tex1.y < 0)

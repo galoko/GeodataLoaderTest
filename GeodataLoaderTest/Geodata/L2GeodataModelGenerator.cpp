@@ -488,7 +488,7 @@ void L2GeodataModelGenerator::GenerateSidePlanes(int GridX, int GridY, int Offse
 
 // Int to float conversion utils
 
-void L2GeodataModelGenerator::ToFloat(int X, int Y, int Z, float& FX, float& FY, float& FZ)
+void L2GeodataModelGenerator::ToFloat(int32_t X, int32_t Y, int32_t Z, float& FX, float& FY, float& FZ)
 {
 	FX = (float)X * ScaleWorld;
 	FY = (float)Y * ScaleWorld;

@@ -127,5 +127,7 @@ public:
 
 	static bool GetWallLayerIndex(int16_t SubBlock, int OffsetX, int OffsetY, int16_t* Layers, int16_t LayersCount, int16_t& DestLayerIndex);
 
+	static bool GetGroundSubBlock(int32_t WorldX, int32_t WorldY, int32_t WorldZ, int16_t& GroundSubBlock);
+
 	static bool WorldToGeo(int32_t WorldX, int32_t WorldY, uint32_t *GeoX, uint32_t *GeoY);
 };
