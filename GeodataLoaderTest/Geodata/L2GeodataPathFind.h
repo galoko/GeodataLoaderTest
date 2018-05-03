@@ -2,7 +2,7 @@
 
 #include <iostream>
 #include <vector>
-#include <unordered_map>
+#include <queue>
 #include <DirectXMath.h>
 
 #include "MathUtils.h"
@@ -17,38 +17,79 @@ typedef uint32_t (*DebugCallbackFunc)(L2GeodataPathFind& PathFind);
 
 class L2GeodataPathFind {
 private:
+	const static int REGION_SIZE = 512;
+	const static int CHECKED_POINTS_IN_LIST_LIMIT = 10000;
+
+#pragma pack(push,1)
+	struct RegionBufferEntry {
+		bool IsChecked : 1;
+		uint8_t DirectionIndex : 2;
+		uint8_t PrevLayerIndex : 5;
+	};
+#pragma pack(pop)
+
+	struct RegionBuffer {
+
+		POINT RegionPoint;
+
+		RegionBufferEntry Data[REGION_SIZE * REGION_SIZE * L2Geodata::LAYERS_PER_SUBBLOCK_LIMIT];
+
+		void SetPointEntry(XMINT3 Point, RegionBufferEntry Entry);
+		RegionBufferEntry GetPointEntry(XMINT3 Point);
+	};
+		
 	struct PathFindPoint {
-		uint32_t Weight;
-		XMINT3 PrevPoint, ThisPoint;
-		int NSWE;
+		uint32_t Weight, HeuristicWeight;
+		
+		int32_t GridX, GridY;
+		int16_t LayerIndex, SubBlock;
 
-		int16_t LayersCount;
-		int16_t *Layers;
+		PathFindPoint(int32_t GridX, int32_t GridY, int16_t Height);
+ 		PathFindPoint(int32_t GridX, int32_t GridY, int16_t LayerIndex, int16_t SubBlock);
 
-		PathFindPoint(XMINT3 StartPoint);
-		PathFindPoint(const PathFindPoint& Prev, POINT Offset);
+		static uint32_t GetDistEuclidean(PathFindPoint& P1, PathFindPoint& P2);
+		static uint32_t GetDistManhattan(PathFindPoint& P1, PathFindPoint& P2);
 
-		void GetLayersFromGeodata(void);
-		void FindNSWE(void);
-		void SetSubBlock(int16_t SubBlock);
+		static uint32_t CalcWeight(PathFindPoint& From, PathFindPoint& To);
+		static uint32_t CalcHeuristicWeight(PathFindPoint& From, PathFindPoint& To);
+
+		XMINT3 GetWorldPoint(void);
+
+		void CalcAllWeights(PathFindPoint& Prev, PathFindPoint& Finish);
+
+		void ApplyEntry(RegionBufferEntry Entry);
 
 		bool operator==(const PathFindPoint& Other);
-
-		int16_t GetSubBlock(void);
+		bool operator<(const PathFindPoint& Other);
 	};
 
 	DebugCallbackFunc DebugCallback;
 
-	vector<PathFindPoint> PointsToCheck, CheckedPoints;
+	vector<RegionBuffer*> Regions;
+	POINT RegionOffset;
 
-	static void ToGrid(XMINT3& World);
-	static void ToWorld(XMINT3& Grid);
+	RegionBuffer* LastRegion;
+	POINT LastRegionPoint;
 
-	bool IsAlreadyChecked(const PathFindPoint& Point);
+	vector<PathFindPoint> PointsToCheck;
+	vector<XMINT3> CheckedPoints;
+
+	static POINT ToGrid(POINT World);
+	static POINT ToWorld(POINT Grid);
+
+	void GetRegionPoints(PathFindPoint& Point, POINT& RegionPoint, POINT& RegionBasePoint);
+	RegionBuffer* GetRegion(POINT RegionPoint);
+	bool IsPointChecked(PathFindPoint& Point); 
+	RegionBufferEntry GetPointEntry(PathFindPoint& Point);
+	void SetPointEntry(PathFindPoint& Point, RegionBufferEntry Entry);
+
+	PathFindPoint ExtractPointWithLowestWeight(void);
+
+	void TraceBack(PathFindPoint& Point, PathFindPoint& Start, vector<XMINT3>& Output);
 
 	void DoDebugCallback(void);
 public:
-	bool FindPath(XMINT3 Start, XMINT3 Finish, vector<XMINT3> Output, DebugCallbackFunc DebugCallback = NULL);
+	bool FindPath(XMINT3 Start, XMINT3 Finish, vector<XMINT3>& Output, uint32_t& Weight, DebugCallbackFunc DebugCallback = NULL);
 
 	vector<XMINT3> GetPointsToCheck(void);
 	vector<XMINT3> GetCheckedPoints(void);

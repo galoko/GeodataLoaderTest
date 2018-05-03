@@ -702,9 +702,9 @@ void Geo3DViewForm::LoadL2Map(unsigned int Width, unsigned int Height)
 
 	HRESULT res;
 
-	res = CreateWICTextureFromFile(DirectDevice, L"l2worldmap.bmp", (ID3D11Resource**)&L2MapTexture, &L2MapTextureView);
+	res = CreateWICTextureFromFile(DirectDevice, L"..\\data\\l2worldmap.bmp", (ID3D11Resource**)&L2MapTexture, &L2MapTextureView);
 	if (FAILED(res)) {
-		cout << "Couldn't load L2 Map Texture, check if l2worldmap.jpg exists " << res << endl;
+		cout << "Couldn't load L2 Map Texture, check if ..\\data\\l2worldmap.jpg exists " << res << endl;
 		return;
 	}
 
@@ -926,7 +926,7 @@ void Geo3DViewForm::DrawScene(void)
 		DirectDeviceCtx->End(SyncQuery);
 
 	// switch the back buffer and the front buffer
-	SwapChain->Present(UseVSync ? 1 : 0, 0);
+	SwapChain->Present(UseVSync ? 2 : 0, 0);
 }
 
 void Geo3DViewForm::Tick(double dt) {
@@ -1026,8 +1026,12 @@ void Geo3DViewForm::UpdatePathFindMarkers(void)
 		for (XMINT3& Point : PointsToCheck)
 			SetPathFindMarker(-1, Point.x, Point.y, Point.z, 0, 255, 0);
 
-		for (XMINT3& Point : CheckedPoints)
-			SetPathFindMarker(-1, Point.x, Point.y, Point.z, 255, 255, 0);
+		for (int Index = 0; Index < CheckedPoints.size(); Index++) {
+
+			XMINT3* Point = &CheckedPoints[Index];
+
+			SetPathFindMarker(-1, Point->x, Point->y, Point->z, 255, 255, 0);
+		}
 	}
 }
 
@@ -1035,8 +1039,8 @@ bool Geo3DViewForm::GetCurrentGroundCoords(int32_t& WorldX, int32_t& WorldY, int
 {
 	ToWorld(CameraPosition.x, CameraPosition.y, CameraPosition.z, WorldX, WorldY, WorldZ);
 
-	int16_t GroundSubBlock;
-	if (!L2Geodata::GetGroundSubBlock(WorldX, WorldY, WorldZ, GroundSubBlock))
+	int16_t GroundSubBlock, GroundLayerIndex;
+	if (!L2Geodata::GetGroundSubBlock(WorldX, WorldY, WorldZ, GroundSubBlock, GroundLayerIndex))
 		return false;
 
 	WorldZ = GET_GEO_HEIGHT(GroundSubBlock);
@@ -1054,8 +1058,6 @@ void Geo3DViewForm::SetPathFindStart(void)
 	HaveStart = true;
 
 	UpdatePathFindMarkers();
-
-	// FindPath();
 }
 
 void Geo3DViewForm::SetPathFindFinish(void)
@@ -1068,8 +1070,6 @@ void Geo3DViewForm::SetPathFindFinish(void)
 	HaveFinish = true;
 
 	UpdatePathFindMarkers();
-
-	// FindPath();
 }
 
 void Geo3DViewForm::FindPath(void)
@@ -1101,7 +1101,7 @@ void Geo3DViewForm::FindPath(void)
 void Geo3DViewForm::LoadState(void)
 {
 	FILE* StateFile = NULL;
-	fopen_s(&StateFile, "state.bin", "r");
+	fopen_s(&StateFile, "..\\data\\state.bin", "r");
 	if (StateFile == NULL)
 		return;
 
@@ -1126,14 +1126,12 @@ void Geo3DViewForm::LoadState(void)
 	CalcL2MapPosition();
 
 	CheckRegions();
-
-	// FindPath();
 }
 
 void Geo3DViewForm::SaveState(void)
 {
 	FILE* StateFile = NULL;
-	fopen_s(&StateFile, "state.bin", "w");
+	fopen_s(&StateFile, "..\\data\\state.bin", "w");
 	if (StateFile == NULL) {
 		cout << "failed to save state" << endl;
 		return;
@@ -1402,7 +1400,7 @@ void Geo3DViewForm::PathFindWork(PathFindRequest* Request)
 {
 	L2GeodataPathFind Search;
 
-	Request->Found = Search.FindPath(Request->Start, Request->Finish, Request->Path, PathFindDebugCallback);
+	Request->Found = Search.FindPath(Request->Start, Request->Finish, Request->Path, Request->Weight, PathFindDebugCallback);
 
 	PostMessage(WindowHandle, WM_SCHEDULED_RESULT, ID_PATH_FIND, (LPARAM)Request);
 }
@@ -1529,10 +1527,14 @@ void Geo3DViewForm::ReadPathFindResult(PathFindRequest* Request)
 	if (!Request->Found)
 		Path.clear();
 
+	cout << "Path find result: " << Path.size() << " points" << endl;
+	cout << "Path found: " << Request->Found << endl;
+	cout << "Path weight: " << Request->Weight << endl;
+
 	if (Path.size() >= 2) {
 		
-		Start = Path[0];
-		Finish = Path[Path.size() - 1];
+		Finish = Path[0];
+		Start = Path[Path.size() - 1];
 	}
 
 	PathFindInProgress = false;
@@ -1554,7 +1556,7 @@ void Geo3DViewForm::ReadPathFindDebug(L2GeodataPathFind* PathFind)
 
 	UpdatePathFindMarkers();
 
-	cout << "debug call, " << PointsToCheck.size() << ", " << CheckedPoints.size() << endl;
+	// cout << "debug call, " << PointsToCheck.size() << ", " << CheckedPoints.size() << endl;
 }
 
 uint32_t Geo3DViewForm::PathFindDebug(L2GeodataPathFind& PathFind)

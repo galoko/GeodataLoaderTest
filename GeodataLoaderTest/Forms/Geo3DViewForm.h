@@ -256,6 +256,7 @@ private:
 		// output
 		bool Found;
 		vector<XMINT3> Path;
+		uint32_t Weight;
 	};
 
 	float ToScene(float F);

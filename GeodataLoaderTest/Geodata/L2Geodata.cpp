@@ -526,7 +526,7 @@ bool L2Geodata::CanGoUnderneath(int16_t SubBlock, int16_t HigherSubBlock)
 	return GetHeightDiff(Height, HigherHeight) > L2Geodata::MIN_LAYER_DIFF;
 }
 
-bool L2Geodata::GetDestSubBlock(int16_t SubBlock, int OffsetX, int OffsetY, int16_t* Layers, int16_t LayersCount, int16_t& DestSubBlock)
+bool L2Geodata::GetDestLayerIndex(int16_t SubBlock, int OffsetX, int OffsetY, int16_t* Layers, int16_t LayersCount, int16_t& DestLayerIndex)
 {
 	// just can't go in this direction
 	if (!CanGoInThisDirection(SubBlock, OffsetX, OffsetY))
@@ -541,7 +541,7 @@ bool L2Geodata::GetDestSubBlock(int16_t SubBlock, int OffsetX, int OffsetY, int1
 		// if we cannot go underneath the higher subblock then we'll go right on it
 		if (!CanGoUnderneath(SubBlock, HigherSubBlock)) {
 
-			DestSubBlock = HigherSubBlock;
+			DestLayerIndex = HighLayerIndex;
 			return true;
 		}
 	}
@@ -549,7 +549,7 @@ bool L2Geodata::GetDestSubBlock(int16_t SubBlock, int OffsetX, int OffsetY, int1
 	// at this moment we already not struggling with higher subblock
 	if (LowLayerIndex != -1) {
 
-		DestSubBlock = Layers[LowLayerIndex];
+		DestLayerIndex = LowLayerIndex;
 		return true;
 	}
 
@@ -575,7 +575,7 @@ bool L2Geodata::GetWallLayerIndex(int16_t SubBlock, int OffsetX, int OffsetY, in
 	return WallRequired;
 }
 
-bool L2Geodata::GetGroundSubBlock(int32_t WorldX, int32_t WorldY, int32_t WorldZ, int16_t& GroundSubBlock)
+bool L2Geodata::GetGroundSubBlock(int32_t WorldX, int32_t WorldY, int32_t WorldZ, int16_t& GroundSubBlock, int16_t& GroundLayerIndex)
 {
 	int16_t LayersCount;
 	int16_t* Layers = GetSubBlocks(WorldX, WorldY, LayersCount);
@@ -586,6 +586,7 @@ bool L2Geodata::GetGroundSubBlock(int32_t WorldX, int32_t WorldY, int32_t WorldZ
 
 		if (GET_GEO_HEIGHT(SubBlock) <= WorldZ + MIN_LAYER_DIFF) {
 			GroundSubBlock = SubBlock;
+			GroundLayerIndex = LayerIndex;
 			return true;
 		}
 	}

@@ -3,6 +3,7 @@
 #include <Windows.h>
 #include <cmath>
 #include <iostream>
+#include "MathUtils.h"
 
 // points
 
@@ -28,6 +29,10 @@ bool Equals(POINT P1, POINT P2) {
 
 POINT ToZeroBasePoint(POINT P) {
 	return { (P.x + 1) / 2, (P.y + 1) / 2 };
+}
+
+POINT GetMidPoint(POINT P1, POINT P2) {
+	return { (P1.x + P2.x) / 2, (P1.y + P2.y) / 2 };
 }
 
 // color
