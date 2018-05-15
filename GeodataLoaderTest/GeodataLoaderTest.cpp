@@ -32,6 +32,10 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance
 
 	L2Geodata::LoadEasyGeo(L"..\\data\\easygeo.bin");
 
+	// L2GeodataPathFind::GenerateNeighborWeightCache();
+	// L2Geodata::SaveNeighborWeightCache(L"..\\data\\nwc_cache.bin");
+	L2Geodata::LoadNeighborWeightCache(L"..\\data\\nwc_cache.bin");
+
 	Geo3DViewForm::GetInstance().Init(1280, 960, L"Geo3DView", L"Geodata 3D View", hInstance);
 	Geo3DViewForm::GetInstance().Show();
 

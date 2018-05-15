@@ -23,6 +23,14 @@ int16_t L2Geodata::LayersTable[LAYERS_COUNT_LIMIT];
 int32_t L2Geodata::NextMultilayerBlockMapIndex;
 int32_t L2Geodata::NextLayersTableIndex;
 
+uint8_t *L2Geodata::NWC_FullData;
+int32_t L2Geodata::NWC_MultilayerBlockMap[GEO_WIDTH_IN_REGIONS][GEO_HEIGHT_IN_REGIONS][GEO_REGION_SIZE_IN_BLOCKS][GEO_REGION_SIZE_IN_BLOCKS];
+int32_t L2Geodata::NWC_MultilayerSubblockMap[MULTILAYER_BLOCK_LIMIT][GEO_BLOCK_SIZE][GEO_BLOCK_SIZE];
+uint8_t L2Geodata::NWC_LayersTable[LAYERS_COUNT_LIMIT];
+		
+atomic<int32_t> L2Geodata::NWC_NextMultilayerBlockMapIndex;
+atomic<int32_t> L2Geodata::NWC_NextLayersTableIndex;
+
 // get
 
 int16_t *L2Geodata::GetGeoSubBlockPtrInternal(uint32_t RegionX, uint32_t RegionY, uint32_t BlockX, uint32_t BlockY,
@@ -35,37 +43,6 @@ int16_t *L2Geodata::GetGeoSubBlockPtrInternal(uint32_t RegionX, uint32_t RegionY
 		SubBlockX * GEO_BLOCK_COLUMN_SIZE + SubBlockY * 1;
 
 	return &FullData[Index];
-}
-
-int16_t *L2Geodata::GetGeoLayersPtrInternal(uint32_t RegionX, uint32_t RegionY, uint32_t BlockX, uint32_t BlockY,
-	uint32_t SubBlockX, uint32_t SubBlockY) {
-	uint32_t Index;
-
-	Index =
-		RegionY * GEO_ROW_SIZE + RegionX * GEO_REGION_AREA_SIZE +
-		BlockX * GEO_REGION_COLUMN_SIZE + BlockY * GEO_BLOCK_AREA_SIZE +
-		SubBlockX * GEO_BLOCK_COLUMN_SIZE + SubBlockY * 1;
-
-	return &FullData[Index];
-}
-
-#define SplitGeoCoordinates() \
-	RegionX = GeoX / GEO_REGION_SIZE; \
-	RegionY = GeoY / GEO_REGION_SIZE; \
-	\
-	BlockX = GeoX % GEO_REGION_SIZE / GEO_BLOCK_SIZE; \
-	BlockY = GeoY % GEO_REGION_SIZE / GEO_BLOCK_SIZE; \
-	\
-	SubBlockX = GeoX % GEO_BLOCK_SIZE / 1; \
-	SubBlockY = GeoY % GEO_BLOCK_SIZE / 1;
-
-int16_t *L2Geodata::GetGeoSubBlockPtr(uint32_t GeoX, uint32_t GeoY) {
-
-	uint32_t RegionX, RegionY, BlockX, BlockY, SubBlockX, SubBlockY;
-
-	SplitGeoCoordinates();
-
-	return GetGeoSubBlockPtrInternal(RegionX, RegionY, BlockX, BlockY, SubBlockX, SubBlockY);
 }
 
 bool L2Geodata::WorldToGeo(int32_t WorldX, int32_t WorldY, uint32_t *GeoX, uint32_t *GeoY) {
@@ -90,15 +67,15 @@ bool L2Geodata::GeoToWorld(uint32_t GeoX, uint32_t GeoY, int32_t *WorldX, int32_
 	return true;
 }
 
-int16_t *L2Geodata::GetWorldSubBlockPtr(int32_t WorldX, int32_t WorldY) {
-
-	uint32_t GeoX, GeoY;
-
-	if (WorldToGeo(WorldX, WorldY, &GeoX, &GeoY))
-		return GetGeoSubBlockPtr(GeoX, GeoY);
-	else
-		return nullptr;
-}
+#define SplitGeoCoordinates() \
+	RegionX = GeoX / GEO_REGION_SIZE; \
+	RegionY = GeoY / GEO_REGION_SIZE; \
+	\
+	BlockX = GeoX % GEO_REGION_SIZE / GEO_BLOCK_SIZE; \
+	BlockY = GeoY % GEO_REGION_SIZE / GEO_BLOCK_SIZE; \
+	\
+	SubBlockX = GeoX % GEO_BLOCK_SIZE / 1; \
+	SubBlockY = GeoY % GEO_BLOCK_SIZE / 1;
 
 int16_t* L2Geodata::GetSubBlocks(int32_t WorldX, int32_t WorldY, int16_t& Count) {
 
@@ -406,6 +383,7 @@ bool L2Geodata::LoadRegion(uint32_t RegionX, uint32_t RegionY, wstring FilePath,
 void L2Geodata::Init(void)
 {
 	AllocateData();
+	AllocateNWCData();
 }
 
 void L2Geodata::Load(wstring Directory, GeoType Type) {
@@ -481,6 +459,174 @@ void L2Geodata::SaveEasyGeo(wstring FilePath) {
 	Stream.write((char *)&LayersTable, sizeof(LayersTable));
 	Stream.write((char *)&NextMultilayerBlockMapIndex, sizeof(NextMultilayerBlockMapIndex));
 	Stream.write((char *)&NextLayersTableIndex, sizeof(NextLayersTableIndex));
+}
+
+// Neighbor Weight Cache
+
+void L2Geodata::AllocateNWCData(void)
+{
+	if (NWC_FullData)
+		throw new runtime_error("Neighbor Weight Cache is already allocated");
+
+	NWC_FullData = (uint8_t*)calloc(NWC_FULL_SIZE_IN_BYTES, 1);
+
+	memset(NWC_MultilayerBlockMap, 0xFF, sizeof(NWC_MultilayerBlockMap));
+	memset(NWC_MultilayerSubblockMap, 0xFF, sizeof(NWC_MultilayerSubblockMap));
+}
+
+int32_t L2Geodata::AllocateNWCBlockMapEntry(void)
+{
+	int32_t Index = NWC_NextMultilayerBlockMapIndex.fetch_add(1);
+
+	if (Index > MULTILAYER_BLOCK_LIMIT)
+		throw new runtime_error("Multilayer weight count exceeds the limit");
+
+	return Index;
+}
+
+int32_t L2Geodata::AllocateNWCLayersEntries(uint32_t Count)
+{
+	int32_t Index = NWC_NextLayersTableIndex.fetch_add(Count);
+
+	if (Index > LAYERS_COUNT_LIMIT)
+		throw new runtime_error("Layers entries count exceeds the limit (NWC)");
+
+	return Index;
+}
+
+void L2Geodata::LoadNeighborWeightCache(wstring FilePath)
+{
+	ifstream Stream(FilePath, ios::binary);
+
+	Stream.read((char *)NWC_FullData, NWC_FULL_SIZE_IN_BYTES);
+	Stream.read((char *)&NWC_MultilayerBlockMap, sizeof(NWC_MultilayerBlockMap));
+	Stream.read((char *)&NWC_MultilayerSubblockMap, sizeof(NWC_MultilayerSubblockMap));
+	Stream.read((char *)&NWC_LayersTable, sizeof(NWC_LayersTable));
+	uint32_t NWC_NextMultilayerBlockMapIndex_Local, NWC_NextLayersTableIndex_Local;
+	Stream.read((char *)&NWC_NextMultilayerBlockMapIndex_Local, sizeof(NWC_NextMultilayerBlockMapIndex_Local));
+	Stream.read((char *)&NWC_NextLayersTableIndex_Local, sizeof(NWC_NextLayersTableIndex_Local));
+}
+
+void L2Geodata::SaveNeighborWeightCache(wstring FilePath)
+{
+	ofstream Stream(FilePath, ios::binary);
+
+	Stream.write((char *)NWC_FullData, NWC_FULL_SIZE_IN_BYTES);
+	Stream.write((char *)&NWC_MultilayerBlockMap, sizeof(NWC_MultilayerBlockMap));
+	Stream.write((char *)&NWC_MultilayerSubblockMap, sizeof(NWC_MultilayerSubblockMap));
+	Stream.write((char *)&NWC_LayersTable, sizeof(NWC_LayersTable));
+	uint32_t NWC_NextMultilayerBlockMapIndex_Local = NWC_NextMultilayerBlockMapIndex;
+	uint32_t NWC_NextLayersTableIndex_Local = NWC_NextLayersTableIndex;
+	Stream.write((char *)&NWC_NextMultilayerBlockMapIndex_Local, sizeof(NWC_NextMultilayerBlockMapIndex_Local));
+	Stream.write((char *)&NWC_NextLayersTableIndex_Local, sizeof(NWC_NextLayersTableIndex_Local));
+}
+
+inline uint8_t* L2Geodata::GetNeighborWeightPtrInternal(uint32_t RegionX, uint32_t RegionY, uint32_t BlockX, uint32_t BlockY,
+	uint32_t SubBlockX, uint32_t SubBlockY)
+{
+	uint32_t Index;
+
+	Index =
+		RegionY * GEO_ROW_SIZE + RegionX * GEO_REGION_AREA_SIZE +
+		BlockX * GEO_REGION_COLUMN_SIZE + BlockY * GEO_BLOCK_AREA_SIZE +
+		SubBlockX * GEO_BLOCK_COLUMN_SIZE + SubBlockY * 1;
+
+	return &NWC_FullData[Index];
+}
+
+uint8_t* L2Geodata::GetNeighborWeights(int32_t WorldX, int32_t WorldY, uint8_t& Count)
+{
+	uint32_t GeoX, GeoY;
+
+	if (WorldToGeo(WorldX, WorldY, &GeoX, &GeoY)) {
+
+		uint32_t RegionX, RegionY, BlockX, BlockY, SubBlockX, SubBlockY;
+
+		SplitGeoCoordinates();
+
+		uint8_t* Weight = GetNeighborWeightPtrInternal(RegionX, RegionY, BlockX, BlockY, SubBlockX, SubBlockY);
+		if (*Weight == SPECIAL_NEIGHBOR_WEIGHT_MULTILAYER) {
+
+			int32_t BlockIndex = NWC_MultilayerBlockMap[RegionX][RegionY][BlockX][BlockY];
+			if (BlockIndex == -1) {
+				Count = 0;
+				return nullptr;
+			}
+
+			int32_t SubBlockLayersIndex = NWC_MultilayerSubblockMap[BlockIndex][SubBlockX][SubBlockY];
+			if (SubBlockLayersIndex == -1) {
+				Count = 0;
+				return nullptr;
+			}
+
+			Count = NWC_LayersTable[SubBlockLayersIndex];
+			return &NWC_LayersTable[SubBlockLayersIndex + 1];
+		}
+		else {
+			Count = 1;
+			return Weight;
+		}
+	}
+	else {
+		Count = 0;
+		return nullptr;
+	}
+}
+
+inline void L2Geodata::SetNeighborWeightInternal(uint32_t RegionX, uint32_t RegionY, uint32_t BlockX, uint32_t BlockY, uint32_t SubBlockX,
+	uint32_t SubBlockY, uint8_t Weight)
+{
+	uint8_t* DestWeight = GetNeighborWeightPtrInternal(RegionX, RegionY, BlockX, BlockY, SubBlockX, SubBlockY);
+
+	*DestWeight = Weight;
+}
+
+inline void L2Geodata::SetNeighborWeightsInternal(uint32_t RegionX, uint32_t RegionY, uint32_t BlockX, uint32_t BlockY, uint32_t SubBlockX, 
+	uint32_t SubBlockY, uint8_t WeightsCount, uint8_t* Weights)
+{
+	uint8_t* FullWeight = GetNeighborWeightPtrInternal(RegionX, RegionY, BlockX, BlockY, SubBlockX, SubBlockY);
+
+	*FullWeight = SPECIAL_NEIGHBOR_WEIGHT_MULTILAYER;
+
+	int32_t BlockIndex = NWC_MultilayerBlockMap[RegionX][RegionY][BlockX][BlockY];
+	if (BlockIndex == -1) {
+
+		BlockIndex = AllocateNWCBlockMapEntry();
+		NWC_MultilayerBlockMap[RegionX][RegionY][BlockX][BlockY] = BlockIndex;
+	}
+
+	int32_t WeightsIndex = NWC_MultilayerSubblockMap[BlockIndex][SubBlockX][SubBlockY];
+	if (WeightsIndex != -1)
+		throw new runtime_error("Block weights are already set");
+
+	WeightsIndex = AllocateNWCLayersEntries(1 + WeightsCount);
+	NWC_MultilayerSubblockMap[BlockIndex][SubBlockX][SubBlockY] = WeightsIndex;
+
+	NWC_LayersTable[WeightsIndex] = WeightsCount;
+	memcpy(&NWC_LayersTable[WeightsIndex + 1], Weights, WeightsCount * sizeof(*Weights));
+}
+
+void L2Geodata::SetNeighborWeights(int32_t WorldX, int32_t WorldY, uint8_t Count, uint8_t* Weights)
+{
+	if (Count < 0 || Count > LAYERS_PER_SUBBLOCK_LIMIT)
+		throw new runtime_error("Invalid weights count");
+
+	uint32_t GeoX, GeoY;
+
+	if (WorldToGeo(WorldX, WorldY, &GeoX, &GeoY)) {
+
+		uint32_t RegionX, RegionY, BlockX, BlockY, SubBlockX, SubBlockY;
+
+		SplitGeoCoordinates();
+
+		if (Count == 0)
+			SetNeighborWeightInternal(RegionX, RegionY, BlockX, BlockY, SubBlockX, SubBlockY, 0);
+		else
+		if (Count == 1)
+			SetNeighborWeightInternal(RegionX, RegionY, BlockX, BlockY, SubBlockX, SubBlockY, Weights[0]);
+		else 
+			SetNeighborWeightsInternal(RegionX, RegionY, BlockX, BlockY, SubBlockX, SubBlockY, Count, Weights);
+	}
 }
 
 // Utils forward declaration

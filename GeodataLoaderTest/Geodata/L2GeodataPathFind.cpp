@@ -2,6 +2,10 @@
 
 #include "L2GeodataPathFind.h"
 
+#include "TimeUtils.h"
+
+#include "SimplexNoise.h"
+
 POINT L2GeodataPathFind::ToGrid(POINT World)
 {
 	return { World.x / L2Geodata::GEO_COORDS_IN_WORLD_COORDS, World.y / L2Geodata::GEO_COORDS_IN_WORLD_COORDS };
@@ -14,6 +18,8 @@ POINT L2GeodataPathFind::ToWorld(POINT Grid)
 
 void L2GeodataPathFind::DoDebugCallback(void)
 {
+	return;
+
 	if (DebugCallback) {
 		uint32_t Delay = DebugCallback(*this);
 		if (Delay > 0)
@@ -80,13 +86,173 @@ void L2GeodataPathFind::SetPointEntry(PathFindPoint& Point, RegionBufferEntry En
 
 L2GeodataPathFind::PathFindPoint L2GeodataPathFind::ExtractPointWithLowestWeight(void)
 {
-	vector<PathFindPoint>::iterator Iterator = PointsToCheck.end() - 1;
+	auto Iterator = prev(PointsToCheck.end());
 
 	PathFindPoint Point = *Iterator;
 
 	PointsToCheck.erase(Iterator);
 
 	return Point;
+}
+
+bool L2GeodataPathFind::GetNextLinePoint(PathFindPoint& PrevPoint, POINT& Direction, PathFindPoint& NextPoint, bool IsDiagonal)
+{
+	if (Direction.x == 0 || Direction.y == 0) {
+
+		// straight case
+
+		POINT GridPoint = AddPoint({ PrevPoint.GridX, PrevPoint.GridY }, Direction);
+		POINT WorldPoint = ToWorld(GridPoint);
+
+		int16_t LayersCount;
+		int16_t* Layers = L2Geodata::GetSubBlocks(WorldPoint.x, WorldPoint.y, LayersCount);
+
+		int16_t DestLayerIndex;
+		bool CanGo = L2Geodata::GetDestLayerIndex(PrevPoint.SubBlock, Direction.x, Direction.y, Layers, LayersCount, DestLayerIndex);
+		if (!CanGo)
+			return false;
+
+		NextPoint = PathFindPoint(GridPoint.x, GridPoint.y, DestLayerIndex, Layers[DestLayerIndex]);
+		NextPoint.Weight = PathFindPoint::CalcWeight(IsDiagonal, PrevPoint, NextPoint);
+
+		return true;
+	}
+	else {
+
+		// diagonal case
+
+		POINT Direction0 = { Direction.x, 0 };
+		POINT Direction1 = { 0, Direction.y };
+
+		PathFindPoint NextPoint00, NextPoint01;
+		bool HavePoint0 = GetNextLinePoint(PrevPoint, Direction0, NextPoint00, true) && GetNextLinePoint(NextPoint00, Direction1, NextPoint01, true);
+		uint32_t Weight0 = NextPoint00.Weight + NextPoint01.Weight;
+
+		PathFindPoint NextPoint10, NextPoint11;
+		bool HavePoint1 = GetNextLinePoint(PrevPoint, Direction1, NextPoint10, true) && GetNextLinePoint(NextPoint10, Direction0, NextPoint11, true);
+		uint32_t Weight1 = NextPoint10.Weight + NextPoint11.Weight;
+
+		if (HavePoint0 && (HavePoint1 && Weight0 <= Weight1 || !HavePoint1)) {
+			NextPoint = NextPoint01;
+			NextPoint.Weight = Weight0;
+		}
+		else
+			if (HavePoint1) {
+				NextPoint = NextPoint11;
+				NextPoint.Weight = Weight1;
+			}
+			else
+				return false;
+
+		return true;
+	}
+
+	return false;
+}
+
+bool L2GeodataPathFind::ConstructLineBetweenPoints(PathFindPoint& Start, PathFindPoint& Finish, vector<XMINT3>& LinePoints, float WeightThreshold)
+{
+	int32_t PixelsCount = max(abs(Finish.GridX - Start.GridX), abs(Finish.GridY - Start.GridY));
+
+	PathFindPoint PrevPoint = Start;
+
+	uint32_t MaxWeight = (uint32_t)((Finish.Weight - Start.Weight) / WeightThreshold) + 1;
+
+	uint32_t Weight = 0;
+
+	LinePoints.push_back(PrevPoint.GetWorldPoint());
+
+	for (int32_t Counter = 1; Counter <= PixelsCount; Counter++) {
+
+		int32_t GridX = (int32_t)round(Start.GridX + (Finish.GridX - Start.GridX) * Counter / (float)PixelsCount);
+		int32_t GridY = (int32_t)round(Start.GridY + (Finish.GridY - Start.GridY) * Counter / (float)PixelsCount);
+
+		POINT Direction = { GridX - PrevPoint.GridX, GridY - PrevPoint.GridY };
+
+		assert(Direction.x != 0 || Direction.y != 0);
+
+		PathFindPoint NextPoint;
+		if (!GetNextLinePoint(PrevPoint, Direction, NextPoint, false))
+			return false;
+
+		Weight += NextPoint.Weight;
+		if (Weight > MaxWeight)
+			return false;
+
+		if (Counter < PixelsCount) {
+			LinePoints.push_back(NextPoint.GetWorldPoint());
+
+			uint32_t Dist = PathFindPoint::GetDistManhattan2D(NextPoint, PrevPoint);
+			if (Dist > 2)
+				cout << "pidor " << Dist << endl;
+
+			PrevPoint = NextPoint;
+		}
+	}
+
+	return true;
+}
+
+uint32_t L2GeodataPathFind::ApplyLinearApproximation(vector<PathFindPoint>& Path, vector<vector<XMINT3>>& Points)
+{
+	if (Path.size() < 2)
+		throw new runtime_error("Invalid points count as input in linear approximation");
+
+	PathFindPoint* PrevLineLastPoint = NULL;
+	vector<XMINT3> PrevLinePoints;
+	bool HavePrevLine = false;
+
+	Points.clear();
+
+	PathFindPoint* CurrentPoint = &Path[Path.size() - 1];
+
+	int Index = (int)Path.size() - 2;
+	while (Index >= 0) {
+
+		PathFindPoint* NextPoint = &Path[Index];
+
+		vector<XMINT3> CurrentLinePoints;
+		bool CanConstructALine = ConstructLineBetweenPoints(*CurrentPoint, *NextPoint, CurrentLinePoints, 0.9f);
+		if (!CanConstructALine) {
+
+			if (!HavePrevLine)
+				throw new runtime_error("Couldn't construct a line between consecutive points");
+
+			Points.push_back(PrevLinePoints);
+
+			CurrentPoint = PrevLineLastPoint;
+			HavePrevLine = false;
+		}
+		else {
+			PrevLinePoints = CurrentLinePoints;
+
+			PrevLineLastPoint = NextPoint;
+			HavePrevLine = true;
+
+			Index--;
+		}
+	}
+
+	if (HavePrevLine)
+		Points.push_back(PrevLinePoints);
+	else
+		Points.push_back({ CurrentPoint->GetWorldPoint() });
+
+	Points[Points.size() - 1].push_back(Path[0].GetWorldPoint());
+
+	return Path[0].Weight;
+}
+
+uint32_t L2GeodataPathFind::GetPathAsSingleLine(vector<PathFindPoint>& Path, vector<vector<XMINT3>>& Points)
+{
+	vector<XMINT3> Line;
+
+	for (int Index = (int)Path.size() - 1; Index >= 0; Index--) 
+		Line.push_back(Path[Index].GetWorldPoint());
+
+	Points.push_back(Line);
+
+	return Path[0].Weight;
 }
 
 static const POINT Directions[4] = {
@@ -103,11 +269,11 @@ static const POINT ReversedDirections[4] = {
 	{  0,  1 }
 };
 
-void L2GeodataPathFind::TraceBack(PathFindPoint& Finish, PathFindPoint& Start, vector<XMINT3>& Output)
+void L2GeodataPathFind::TraceBack(PathFindPoint& Finish, PathFindPoint& Start, vector<PathFindPoint>& Output)
 {
 	Output.clear();
 
-	Output.push_back(Finish.GetWorldPoint());
+	Output.push_back(Finish);
 
 	PathFindPoint CurrentPoint = Finish;
 	while (!(CurrentPoint == Start)) {
@@ -116,15 +282,40 @@ void L2GeodataPathFind::TraceBack(PathFindPoint& Finish, PathFindPoint& Start, v
 		if (!Entry.IsChecked)
 			throw new runtime_error("Traceback found unchecked point");
 
-		CurrentPoint.ApplyEntry(Entry);
+		CurrentPoint = CurrentPoint.ApplyEntry(Entry);
 
-		Output.push_back(CurrentPoint.GetWorldPoint());
+		Output.push_back(CurrentPoint);
 	}
-
-	Output.push_back(Start.GetWorldPoint());
 }
 
-bool L2GeodataPathFind::FindPath(XMINT3 Start, XMINT3 Finish, vector<XMINT3>& Output, uint32_t& Weight, DebugCallbackFunc DebugCallback)
+void L2GeodataPathFind::RecalculateWeights(vector<PathFindPoint>& Path)
+{
+	PathFindPoint* StartPoint = &Path[(int)Path.size() - 1];
+	PathFindPoint* FinishPoint = &Path[0];
+		
+	StartPoint->Weight = PathFindPoint::CalcWeight(false, *StartPoint, *FinishPoint);
+	StartPoint->HeuristicWeight = 0;
+
+	PathFindPoint* PrevPoint = StartPoint;
+	POINT PrevDirection = Directions[0];
+
+	for (int Index = (int)Path.size() - 2; Index >= 0; Index--) {
+
+		PathFindPoint* CurrentPoint = &Path[Index];
+
+		POINT CurrentDirection = { CurrentPoint->GridX - PrevPoint->GridX, CurrentPoint->GridY - PrevPoint->GridY };
+		bool IsDiagonal = (abs(CurrentDirection.x) == abs(PrevDirection.y) && abs(CurrentDirection.y) == abs(PrevDirection.x));
+		IsDiagonal = false;
+
+		CurrentPoint->Weight = PrevPoint->Weight + PathFindPoint::CalcWeight(IsDiagonal, *PrevPoint, *CurrentPoint);
+		CurrentPoint->HeuristicWeight = 0;
+
+		PrevPoint = CurrentPoint;
+		PrevDirection = CurrentDirection;
+	}
+}
+
+bool L2GeodataPathFind::FindPath(XMINT3 Start, XMINT3 Finish, vector<vector<XMINT3>>& Output, uint32_t& Weight, DebugCallbackFunc DebugCallback)
 {
 	this->DebugCallback = DebugCallback;
 
@@ -144,8 +335,7 @@ bool L2GeodataPathFind::FindPath(XMINT3 Start, XMINT3 Finish, vector<XMINT3>& Ou
 
 	PathFindPoint PathStart(StartPoint.x, StartPoint.y, Start.z);
 	PathFindPoint PathFinish(FinishPoint.x, FinishPoint.y, Finish.z);
-	POINT NoDirection = { 0, 0 };
-	PathStart.CalcAllWeights(NoDirection, PathStart, PathFinish);
+	PathStart.CalcAllWeights(false, PathStart, PathFinish);
 
 	cout << "Start to finish heuristic weight: " << PathStart.HeuristicWeight << endl;
 
@@ -159,13 +349,20 @@ bool L2GeodataPathFind::FindPath(XMINT3 Start, XMINT3 Finish, vector<XMINT3>& Ou
 
 	uint32_t CheckedPointsIndex = 0;
 
-	while (PointsToCheck.size() > 0) {
+	while (!PointsToCheck.empty()) {
 
 		PathFindPoint Point = ExtractPointWithLowestWeight();
 
 		if (Point == PathFinish) {
-			TraceBack(Point, PathStart, Output);
-			Weight = Point.Weight;
+
+			vector<PathFindPoint> Path;
+			TraceBack(Point, PathStart, Path);
+
+			RecalculateWeights(Path);
+
+			Weight = ApplyLinearApproximation(Path, Output);
+			// Weight = GetPathAsSingleLine(Path, Output);
+				
 			return true;
 		}
 
@@ -197,10 +394,12 @@ bool L2GeodataPathFind::FindPath(XMINT3 Start, XMINT3 Finish, vector<XMINT3>& Ou
 
 					POINT PointDirection = Directions[GetPointEntry(Point).DirectionIndex];
 
-					Neighbour.CalcAllWeights(PointDirection, Point, PathFinish);
+					bool IsDiagonal = (abs(Direction.x) == abs(PointDirection.y) && abs(Direction.y) == abs(PointDirection.x));
+					IsDiagonal = false;
 
-					vector<PathFindPoint>::iterator InsertionPoint;
-					InsertionPoint = lower_bound(PointsToCheck.begin(), PointsToCheck.end(), Neighbour);
+					Neighbour.CalcAllWeights(IsDiagonal, Point, PathFinish);
+
+					auto InsertionPoint = lower_bound(PointsToCheck.begin(), PointsToCheck.end(), Neighbour);
 
 					PointsToCheck.insert(InsertionPoint, Neighbour);
 
@@ -236,6 +435,75 @@ vector<XMINT3> L2GeodataPathFind::GetCheckedPoints(void)
 {
 	vector<XMINT3> Result(CheckedPoints);
 	return Result;
+}
+
+const static int NWC_GENEREATION_TASK_COUNT = 120;
+const static int WIDTH_PER_TASK = (L2Geodata::GEO_WIDTH + NWC_GENEREATION_TASK_COUNT - 1) / NWC_GENEREATION_TASK_COUNT;
+
+VOID L2GeodataPathFind::GenerateNeighborWeightCacheWorkCallback(PTP_CALLBACK_INSTANCE Instance, PVOID Context, PTP_WORK Work)
+{
+	int WorkNum = (int)(SIZE_T)Context;
+
+	uint32_t StartX = WorkNum * WIDTH_PER_TASK;
+	uint32_t EndX = min(StartX + WIDTH_PER_TASK, L2Geodata::GEO_WIDTH) - 1;
+
+	for (uint32_t X = StartX; X <= EndX; X++)
+		for (uint32_t Y = 0; Y < L2Geodata::GEO_HEIGHT; Y++) {
+
+			int32_t WorldX, WorldY;
+
+			if (!L2Geodata::GeoToWorld(X, Y, &WorldX, &WorldY))
+				throw new runtime_error("Wrong Geo Coord in GenerateNeighborWeightCache work callback");
+
+			int16_t LayersCount;
+			int16_t* Layers = L2Geodata::GetSubBlocks(WorldX, WorldY, LayersCount);
+
+			uint8_t WeightsCount = (uint8_t)LayersCount;
+			uint8_t Weights[L2Geodata::LAYERS_PER_SUBBLOCK_LIMIT];
+
+			for (int WeightIndex = 0; WeightIndex < WeightsCount; WeightIndex++) {
+
+				POINT World = { WorldX, WorldY };
+				POINT Grid = ToGrid(World);
+
+				PathFindPoint P = PathFindPoint(Grid.x, Grid.y, WeightIndex, Layers[WeightIndex]);
+
+				uint8_t Weight = (uint8_t)min(PathFindPoint::CalcNeighborsWeight(P), L2Geodata::SPECIAL_NEIGHBOR_WEIGHT_MULTILAYER - 1);
+
+				Weights[WeightIndex] = Weight;
+			}
+
+			L2Geodata::SetNeighborWeights(WorldX, WorldY, WeightsCount, Weights);
+		}
+}
+
+void L2GeodataPathFind::GenerateNeighborWeightCache(void)
+{
+	PTP_POOL Pool = CreateThreadpool(NULL);
+
+	LONGLONG StartTime = GetTime();
+
+	PTP_WORK Works[NWC_GENEREATION_TASK_COUNT];
+
+	for (int WorkNum = 0; WorkNum < NWC_GENEREATION_TASK_COUNT; WorkNum++) {
+
+		PTP_WORK Work = CreateThreadpoolWork(GenerateNeighborWeightCacheWorkCallback, (PVOID)(SIZE_T)WorkNum, NULL);
+		if (Work == NULL)
+			throw new runtime_error("Couldn't create model generation work");
+
+		SubmitThreadpoolWork(Work);
+
+		Works[WorkNum] = Work;
+	}
+
+	for (int WorkNum = 0; WorkNum < NWC_GENEREATION_TASK_COUNT; WorkNum++)
+		WaitForThreadpoolWorkCallbacks(Works[WorkNum], false);
+	
+	CloseThreadpool(Pool);
+
+	LONGLONG EndTime = GetTime();
+
+	cout << "Neighbor Weight Cache generated for " << TimeToMs(EndTime - StartTime) << " ms" << endl;
 }
 
 // PathFindPoint
@@ -284,6 +552,16 @@ uint32_t L2GeodataPathFind::PathFindPoint::GetDistManhattan(PathFindPoint& P1, P
 	return abs(DX) + abs(DY) + abs(DZ);
 }
 
+uint32_t L2GeodataPathFind::PathFindPoint::GetDistEuclidean2D(PathFindPoint & P1, PathFindPoint & P2)
+{
+	int32_t DX, DY;
+
+	DX = P2.GridX - P1.GridX;
+	DY = P2.GridY - P1.GridY;
+
+	return (uint32_t)round(sqrt((float)(DX * DX + DY * DY)));
+}
+
 uint32_t L2GeodataPathFind::PathFindPoint::GetDistManhattan2D(PathFindPoint & P1, PathFindPoint & P2)
 {
 	int32_t DX, DY;
@@ -303,31 +581,27 @@ uint32_t L2GeodataPathFind::PathFindPoint::CalcHeightWeight(PathFindPoint& From,
 	return HeightDiff;
 }
 
-uint32_t L2GeodataPathFind::PathFindPoint::CalcDistanceWeight(POINT& PrevDirection, PathFindPoint& From, PathFindPoint& To)
+uint32_t L2GeodataPathFind::PathFindPoint::CalcDistanceWeight(bool IsDiagonal, PathFindPoint& From, PathFindPoint& To)
 {
-	POINT CurrentDirection = { To.GridX - From.GridX, To.GridY - From.GridY };
-
-	bool IsDiagonal = (abs(CurrentDirection.x) == abs(PrevDirection.y) && abs(CurrentDirection.y) == abs(PrevDirection.x));
-
-	return (IsDiagonal ? DIAGONAL_ADDITIONAL_WEIGHT : STRAIGHT_WEIGHT) + CalcHeightWeight(From, To);
+	return (IsDiagonal ? DIAGONAL_HALF_WEIGHT : STRAIGHT_WEIGHT) + CalcHeightWeight(From, To);
 }
 
-uint32_t L2GeodataPathFind::PathFindPoint::CalcNeighborsWeight(PathFindPoint& P)
+uint32_t L2GeodataPathFind::PathFindPoint::CalcNeighborsWeight(PathFindPoint& StartPoint)
 {
-	uint32_t Weight = 0;
-
-	POINT GridOffset = { P.GridX - NEIGHBORS_REGION_SIZE / 2, P.GridY - NEIGHBORS_REGION_SIZE / 2 };
+	POINT GridOffset = { StartPoint.GridX - NEIGHBORS_REGION_SIZE / 2, StartPoint.GridY - NEIGHBORS_REGION_SIZE / 2 };
 
 	NeighborsRegionBuffer Neighbors = { };
 	NeighborsRegionQueue Queue = NeighborsRegionQueue();
 
-	uint8_t PRegionBasedX = (uint8_t)(P.GridX - GridOffset.x);
-	uint8_t PRegionBasedY = (uint8_t)(P.GridY - GridOffset.y);
+	uint8_t PRegionBasedX = (uint8_t)(StartPoint.GridX - GridOffset.x);
+	uint8_t PRegionBasedY = (uint8_t)(StartPoint.GridY - GridOffset.y);
 
-	Queue.Push(PRegionBasedX, PRegionBasedY, (uint8_t)P.LayerIndex);
+	Queue.Push(PRegionBasedX, PRegionBasedY, (uint8_t)StartPoint.LayerIndex);
 	Neighbors.SetPointCheched(PRegionBasedX, PRegionBasedY);
 
-	int16_t SrcHeight = GET_GEO_HEIGHT(P.SubBlock);
+	int16_t SrcHeight = GET_GEO_HEIGHT(StartPoint.SubBlock);
+
+	uint32_t Weight = 0;
 
 	while (true) {
 
@@ -342,7 +616,7 @@ uint32_t L2GeodataPathFind::PathFindPoint::CalcNeighborsWeight(PathFindPoint& P)
 		int16_t LayersCount;
 		int16_t* Layers = L2Geodata::GetSubBlocks(WorldPoint.x, WorldPoint.y, LayersCount);
 
-		PathFindPoint P = PathFindPoint(GridPoint.x, GridPoint.y, (int16_t)LayerIndex, Layers[LayerIndex]);
+		PathFindPoint CurrentPoint = PathFindPoint(GridPoint.x, GridPoint.y, (int16_t)LayerIndex, Layers[LayerIndex]);
 
 		for (int DirectionIndex = 0; DirectionIndex < 4; DirectionIndex++) {
 
@@ -352,7 +626,7 @@ uint32_t L2GeodataPathFind::PathFindPoint::CalcNeighborsWeight(PathFindPoint& P)
 
 			// Neighbor is out of bound
 			if (
-				NeighborPoint.x < GridOffset.x || NeighborPoint.x >= GridOffset.x + NEIGHBORS_REGION_SIZE || 
+				NeighborPoint.x < GridOffset.x || NeighborPoint.x >= GridOffset.x + NEIGHBORS_REGION_SIZE ||
 				NeighborPoint.y < GridOffset.y || NeighborPoint.y >= GridOffset.y + NEIGHBORS_REGION_SIZE)
 				continue;
 
@@ -367,17 +641,17 @@ uint32_t L2GeodataPathFind::PathFindPoint::CalcNeighborsWeight(PathFindPoint& P)
 			int16_t* NeighborLayers = L2Geodata::GetSubBlocks(NeighborWorld.x, NeighborWorld.y, NeighborLayersCount);
 
 			int16_t DestLayerIndex;
-			if (!L2Geodata::GetDestLayerIndex(P.SubBlock, Direction.x, Direction.y, NeighborLayers, NeighborLayersCount, DestLayerIndex))
+			if (!L2Geodata::GetDestLayerIndex(CurrentPoint.SubBlock, Direction.x, Direction.y, NeighborLayers, NeighborLayersCount, DestLayerIndex))
 				continue;
 
 			PathFindPoint Neighbor = PathFindPoint(NeighborPoint.x, NeighborPoint.y, DestLayerIndex, NeighborLayers[DestLayerIndex]);
 
-			uint32_t HeightWeight = CalcHeightWeight(P, Neighbor);
+			uint32_t HeightWeight = CalcHeightWeight(CurrentPoint, Neighbor);
 			uint32_t NeighborWallWeight = GET_GEO_NSWE(Neighbor.SubBlock) != L2Geodata::NSWE_ALL ? NEIGHBOR_WALL_WEIGHT : 0;
 
-			uint32_t DistanceMul = MAX_NEIGHBOR_DIST - GetDistManhattan2D(P, Neighbor);
+			uint32_t DistanceMul = MAX_NEIGHBOR_DIST + 1 - GetDistManhattan2D(StartPoint, Neighbor);
 
-			Weight += (HeightWeight + NeighborWallWeight) * DistanceMul;
+			Weight += (HeightWeight * DistanceMul) + NeighborWallWeight * DistanceMul;
 
 			Neighbors.SetPointCheched(NeighborRegionBasedX, NeighborRegionBasedY);
 
@@ -395,27 +669,69 @@ uint32_t L2GeodataPathFind::PathFindPoint::CalcNeighborsWeight(PathFindPoint& P)
 
 			PathFindPoint Neighbor = PathFindPoint(NeighborPoint.x, NeighborPoint.y, 0, 0);
 
-			uint32_t DistanceMul = MAX_NEIGHBOR_DIST - GetDistManhattan2D(P, Neighbor);
+			uint32_t DistanceMul = MAX_NEIGHBOR_DIST + 1 - GetDistManhattan2D(StartPoint, Neighbor);
 
 			Weight += NEIGHBOR_INACCESSIBLE_WEIGHT * DistanceMul;
 		}
 
+	Weight = (int)(Weight / 3 / (NEIGHBORS_REGION_SIZE * NEIGHBORS_REGION_SIZE));
+
 	return Weight;
 }
 
-uint32_t L2GeodataPathFind::PathFindPoint::CalcWeight(POINT& PrevDirection, PathFindPoint& From, PathFindPoint& To)
-{
-	uint32_t DistanceWeight = CalcDistanceWeight(PrevDirection, From, To);
-	uint32_t NeighborsWeight = CalcNeighborsWeight(To);
+POINT L2GeodataPathFind::Offset;
 
-	return DistanceWeight * 5 + NeighborsWeight;
+#define USE_NWC true
+
+uint32_t L2GeodataPathFind::PathFindPoint::GetNeighborsWeight(PathFindPoint& StartPoint)
+{
+	uint32_t Weight;
+	
+	if (USE_NWC) {
+		POINT World = ToWorld({ StartPoint.GridX, StartPoint.GridY });
+
+		uint8_t WeightsCount;
+		uint8_t* Weights = L2Geodata::GetNeighborWeights(World.x, World.y, WeightsCount);
+
+		if (StartPoint.LayerIndex >= WeightsCount)
+			throw new runtime_error("Layer index out of bound (NWC)");
+
+		Weight = Weights[StartPoint.LayerIndex];
+	}
+	else {
+		Weight = CalcNeighborsWeight(StartPoint);
+	}
+
+	return Weight;
+
+	uint32_t FinalWeight = Weight;
+
+	static const float GridToNoiseScale = 0.01f;
+	float t = SimplexNoise::noise((StartPoint.GridX + Offset.x) * GridToNoiseScale, (StartPoint.GridY + Offset.y) * GridToNoiseScale);
+
+	t = (t + 1.0f) / 2.0f;
+
+	static const float MaxScale = 3.0f;
+	static const float MinScale = 1.0f / MaxScale;
+	
+	t = t * (MaxScale - MinScale) + MinScale;
+
+	return (int32_t)(FinalWeight * t);
+}
+
+uint32_t L2GeodataPathFind::PathFindPoint::CalcWeight(bool IsDiagonal, PathFindPoint& From, PathFindPoint& To)
+{
+	uint32_t DistanceWeight = CalcDistanceWeight(IsDiagonal, From, To);
+	uint32_t NeighborsWeight = GetNeighborsWeight(To);
+
+	return DistanceWeight + NeighborsWeight;
 }
 
 uint32_t L2GeodataPathFind::PathFindPoint::CalcHeuristicWeight(PathFindPoint& From, PathFindPoint& To)
 {
-	// return GetDistManhattan(From, To);
-	// return GetDistEuclidean(From, To);
-	return 0;
+	// return GetDistManhattan2D(From, To) * STRAIGHT_WEIGHT + CalcHeightWeight(From, To);
+	return GetDistEuclidean2D(From, To) * STRAIGHT_WEIGHT + CalcHeightWeight(From, To);
+	// return 0;
 }
 
 XMINT3 L2GeodataPathFind::PathFindPoint::GetWorldPoint(void)
@@ -425,27 +741,26 @@ XMINT3 L2GeodataPathFind::PathFindPoint::GetWorldPoint(void)
 	return { WorldPoint.x, WorldPoint.y, GET_GEO_HEIGHT(SubBlock) };
 }
 
-void L2GeodataPathFind::PathFindPoint::CalcAllWeights(POINT& PrevDirection, PathFindPoint& Prev, PathFindPoint& Finish)
+void L2GeodataPathFind::PathFindPoint::CalcAllWeights(bool IsDiagonal, PathFindPoint& Prev, PathFindPoint& Finish)
 {
-	Weight = Prev.Weight + CalcWeight(PrevDirection, Prev, *this);
+	Weight = Prev.Weight + CalcWeight(IsDiagonal, Prev, *this);
 	HeuristicWeight = Weight + CalcHeuristicWeight(*this, Finish);
 }
 
-void L2GeodataPathFind::PathFindPoint::ApplyEntry(RegionBufferEntry Entry)
+L2GeodataPathFind::PathFindPoint L2GeodataPathFind::PathFindPoint::ApplyEntry(RegionBufferEntry Entry)
 {
 	POINT ReversedDirection = ReversedDirections[Entry.DirectionIndex];
-	GridX += ReversedDirection.x;
-	GridY += ReversedDirection.y;
-	LayerIndex = Entry.PrevLayerIndex;
+	int32_t NextGridX = GridX + ReversedDirection.x;
+	int32_t NextGridY = GridY + ReversedDirection.y;
 
-	POINT WorldPoint = ToWorld({ GridX, GridY });
+	POINT WorldPoint = ToWorld({ NextGridX, NextGridY });
 
 	int16_t LayersCount;
 	int16_t* Layers = L2Geodata::GetSubBlocks(WorldPoint.x, WorldPoint.y, LayersCount);
-	if (LayerIndex >= LayersCount)
+	if (Entry.PrevLayerIndex >= LayersCount)
 		throw new runtime_error("Prev layer index is out of bound");
 
-	SubBlock = Layers[LayerIndex];
+	return PathFindPoint(NextGridX, NextGridY, Entry.PrevLayerIndex, Layers[Entry.PrevLayerIndex]);
 }
 
 bool L2GeodataPathFind::PathFindPoint::operator==(const PathFindPoint& Other)

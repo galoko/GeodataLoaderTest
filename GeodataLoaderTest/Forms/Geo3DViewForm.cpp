@@ -348,6 +348,9 @@ void Geo3DViewForm::Init(unsigned int Width, unsigned int Height, WCHAR *WindowC
 
 	// SaveState();
 	*/
+
+	// Debug
+	L2GeodataPathFind::Offset = { 454, 457 };
 }
 
 // Window and Input events processing
@@ -458,6 +461,9 @@ bool Geo3DViewForm::HandleKeyPress(int Key)
 		break;
 	case 'P':
 		FindPath();
+		break;
+	case 'Z':
+		VisualizeWeights();
 		break;
 	case 'M':
 		DrawMap = !DrawMap;
@@ -977,7 +983,7 @@ int32_t Geo3DViewForm::SetPathFindMarker(int32_t ExistingMarker, int32_t WorldX,
 	ToScene(WorldX / L2Geodata::GEO_COORDS_IN_WORLD_COORDS, WorldY / L2Geodata::GEO_COORDS_IN_WORLD_COORDS, WorldZ,
 		X, Y, Z);
 
-	const static float Epsilon = 1.0f * ScaleWorldZ;
+	const static float Epsilon = 8.0f * ScaleWorldZ;
 
 	PathFindMarker Marker;
 	Marker.WorldMatrix = XMMatrixScaling(ScaleWorld, ScaleWorld, 1.0f) * XMMatrixTranslation(X, Y, Z + Epsilon);
@@ -1014,13 +1020,25 @@ void Geo3DViewForm::UpdatePathFindMarkers(void)
 		if (HaveFinish)
 			FinishMarker = SetPathFindMarker(FinishMarker, Finish.x, Finish.y, Finish.z, 255, 0, 0);
 
-		if (Path.size() > 2)
-			for (int Index = 0; Index < Path.size() - 1; Index++) {
+		for (int LineIndex = 0; LineIndex < Path.size(); LineIndex++) {
 
-				XMINT3* Point = &Path[Index];
+			vector<XMINT3>* Line = &Path[LineIndex];
 
-				SetPathFindMarker(-1, Point->x, Point->y, Point->z, 228, 124, 255);
+			bool IsFirstLine = LineIndex == 0;
+			bool IsLastLine = LineIndex == Path.size() - 1;
+
+			for (int PointIndex = (IsFirstLine ? 1 : 0); PointIndex < Line->size() - (IsLastLine ? 1 : 0); PointIndex++) {
+
+				XMINT3* Point = &(*Line)[PointIndex];
+
+				bool IsFirstPoint = PointIndex == 0;
+
+				if (!IsFirstPoint)
+					SetPathFindMarker(-1, Point->x, Point->y, Point->z, 228, 124, 255);
+				else
+					SetPathFindMarker(-1, Point->x, Point->y, Point->z, 0, 216, 255);
 			}
+		}
 	}
 	else {
 		for (XMINT3& Point : PointsToCheck)
@@ -1094,6 +1112,45 @@ void Geo3DViewForm::FindPath(void)
 		else
 			PathFindScheduled = true;
 	}
+}
+
+void Geo3DViewForm::VisualizeWeights(void)
+{
+	const static int VISUALIZATION_SIZE = 150;
+
+	int32_t WorldX, WorldY, WorldZ;
+	if (!GetCurrentGroundCoords(WorldX, WorldY, WorldZ))
+		return;
+
+	UpdatePathFindMarkers();
+
+	POINT StartPoint = SubtractPoint({ WorldX / L2Geodata::GEO_COORDS_IN_WORLD_COORDS, WorldY / L2Geodata::GEO_COORDS_IN_WORLD_COORDS },
+		{ VISUALIZATION_SIZE / 2, VISUALIZATION_SIZE / 2 });
+
+	// L2GeodataPathFind::Offset = { rand(), rand() };
+
+	for (int32_t X = 0; X < VISUALIZATION_SIZE; X++)
+		for (int32_t Y = 0; Y < VISUALIZATION_SIZE; Y++) {
+
+			POINT GridPoint = AddPoint(StartPoint, { X, Y });
+			POINT WorldPoint = { GridPoint.x * L2Geodata::GEO_COORDS_IN_WORLD_COORDS, GridPoint.y * L2Geodata::GEO_COORDS_IN_WORLD_COORDS };
+
+			int16_t LayersCount;
+			int16_t* Layers = L2Geodata::GetSubBlocks(WorldPoint.x, WorldPoint.y, LayersCount);
+
+			for (int16_t LayerIndex = 0; LayerIndex < LayersCount; LayerIndex++) {
+
+				L2GeodataPathFind::PathFindPoint P = L2GeodataPathFind::PathFindPoint(GridPoint.x, GridPoint.y, LayerIndex, Layers[LayerIndex]);
+
+				uint32_t Weight = L2GeodataPathFind::PathFindPoint::GetNeighborsWeight(P);
+
+				double t = 1.0 - min((double)Weight / 254.0, 1.0);
+
+				COLORREF Color = GetSpectrumColor(t);
+
+				SetPathFindMarker(-1, WorldPoint.x, WorldPoint.y, GET_GEO_HEIGHT(P.SubBlock), GetRValue(Color), GetGValue(Color), GetBValue(Color));
+			}
+		}
 }
 
 // State load/save
@@ -1398,9 +1455,17 @@ void Geo3DViewForm::TextureLoadWork(TextureLoadRequest* Request)
 
 void Geo3DViewForm::PathFindWork(PathFindRequest* Request)
 {
+	// L2GeodataPathFind::Offset = { rand(), rand() };
+
 	L2GeodataPathFind Search;
 
+	LONGLONG StartTime = GetTime();
+
 	Request->Found = Search.FindPath(Request->Start, Request->Finish, Request->Path, Request->Weight, PathFindDebugCallback);
+
+	LONGLONG EndTime = GetTime();
+
+	cout << "Path found for " << TimeToMs(EndTime - StartTime) << " ms" << endl;
 
 	PostMessage(WindowHandle, WM_SCHEDULED_RESULT, ID_PATH_FIND, (LPARAM)Request);
 }
@@ -1533,8 +1598,13 @@ void Geo3DViewForm::ReadPathFindResult(PathFindRequest* Request)
 
 	if (Path.size() >= 2) {
 		
-		Finish = Path[0];
-		Start = Path[Path.size() - 1];
+		vector<XMINT3> FirstLine, LastLine;
+
+		FirstLine = Path[0];
+		LastLine = Path[Path.size() - 1];
+
+		Start = FirstLine[0];
+		Finish = LastLine[LastLine.size() - 1];
 	}
 
 	PathFindInProgress = false;

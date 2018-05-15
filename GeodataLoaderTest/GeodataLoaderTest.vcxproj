@@ -177,6 +177,7 @@
     <ClInclude Include="Utils\ColorUtils.h" />
     <ClInclude Include="Utils\FormsUtils.h" />
     <ClInclude Include="Utils\MathUtils.h" />
+    <ClInclude Include="Utils\SimplexNoise.h" />
     <ClInclude Include="utils\TimeUtils.h" />
     <ClInclude Include="Utils\WICTextureLoader.h" />
     <ClInclude Include="Utils\WindowsMessages.h" />
@@ -193,6 +194,7 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="Utils\SimplexNoise.cpp" />
     <ClCompile Include="Utils\Utils.cpp" />
     <ClCompile Include="Utils\WICTextureLoader.cpp" />
   </ItemGroup>

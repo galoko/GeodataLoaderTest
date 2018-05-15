@@ -19,6 +19,10 @@ POINT SubtractPoint(POINT P1, POINT P2) {
 	return { P1.x - P2.x, P1.y - P2.y };
 }
 
+POINT MulPoint(POINT P, int32_t S) {
+	return { P.x * S, P.y * S };
+}
+
 POINT NegatePoint(POINT P) {
 	return { -P.x, -P.y };
 }

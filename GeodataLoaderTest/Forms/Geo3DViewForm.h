@@ -169,7 +169,8 @@ private:
 
 	bool HaveStart, HaveFinish, PathFindInProgress, PathFindScheduled;
 	XMINT3 Start, Finish;
-	vector<XMINT3> Path, PointsToCheck, CheckedPoints;
+	vector<vector<XMINT3>> Path;
+	vector<XMINT3> PointsToCheck, CheckedPoints;
 
 	int32_t StartMarker, FinishMarker;
 
@@ -255,7 +256,7 @@ private:
 
 		// output
 		bool Found;
-		vector<XMINT3> Path;
+		vector<vector<XMINT3>> Path;
 		uint32_t Weight;
 	};
 
@@ -277,6 +278,8 @@ private:
 	void SetPathFindFinish(void);
 
 	void FindPath(void);
+
+	void VisualizeWeights(void);
 
 	// State load/save
 

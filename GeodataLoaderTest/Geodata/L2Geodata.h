@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <atomic>
 
 using namespace std;
 
@@ -68,7 +69,7 @@ public:
 	const static int16_t SPECIAL_SUBBLOCK_MULTILAYER = 0x7F7F;
 
 	const static int HEIGHT_RESOLUTION = 8;
-	const static int MIN_LAYER_DIFF = 8 * HEIGHT_RESOLUTION;
+	const static int MIN_LAYER_DIFF = 4 * HEIGHT_RESOLUTION;
 
 	static int16_t *FullData;
 	static int32_t MultilayerBlockMap[GEO_WIDTH_IN_REGIONS][GEO_HEIGHT_IN_REGIONS][GEO_REGION_SIZE_IN_BLOCKS][GEO_REGION_SIZE_IN_BLOCKS];
@@ -78,19 +79,27 @@ public:
 	static int32_t NextMultilayerBlockMapIndex;
 	static int32_t NextLayersTableIndex;
 
+	// Neighbor weight cache
+
+	const static uint32_t NWC_FULL_SIZE_IN_BYTES = GEO_FULL_SIZE * sizeof(uint8_t);
+
+	const static uint8_t SPECIAL_NEIGHBOR_WEIGHT_MULTILAYER = 255;
+
+	static uint8_t *NWC_FullData;
+	static int32_t NWC_MultilayerBlockMap[GEO_WIDTH_IN_REGIONS][GEO_HEIGHT_IN_REGIONS][GEO_REGION_SIZE_IN_BLOCKS][GEO_REGION_SIZE_IN_BLOCKS];
+	static int32_t NWC_MultilayerSubblockMap[MULTILAYER_BLOCK_LIMIT][GEO_BLOCK_SIZE][GEO_BLOCK_SIZE];
+	static uint8_t NWC_LayersTable[LAYERS_COUNT_LIMIT];
+
+	static atomic<int32_t> NWC_NextMultilayerBlockMapIndex;
+	static atomic<int32_t> NWC_NextLayersTableIndex;
+
 	L2Geodata(void) { }
 
 	static void AllocateData(void);
 	static int32_t AllocateBlockMapEntry(void);
 	static int32_t AllocateLayersEntries(uint32_t Count);
 
-	static inline int16_t *GetGeoSubBlockPtr(uint32_t GeoX, uint32_t GeoY);
-	static int16_t *GetWorldSubBlockPtr(int32_t WorldX, int32_t WorldY);
-
-	static inline bool GeoToWorld(uint32_t GeoX, uint32_t GeoY, int32_t *WorldX, int32_t *WorldY);
 	static inline int16_t *GetGeoSubBlockPtrInternal(uint32_t RegionX, uint32_t RegionY,
-		uint32_t BlockX, uint32_t BlockY, uint32_t SubBlockX, uint32_t SubBlockY);
-	static inline int16_t *GetGeoLayersPtrInternal(uint32_t RegionX, uint32_t RegionY,
 		uint32_t BlockX, uint32_t BlockY, uint32_t SubBlockX, uint32_t SubBlockY);
 	static inline void EraseGeoSubBlock(uint32_t RegionX, uint32_t RegionY,
 		uint32_t BlockX, uint32_t BlockY, uint32_t SubBlockX, uint32_t SubBlockY);
@@ -105,6 +114,19 @@ public:
 
 	static bool LoadRegion(uint32_t RegionX, uint32_t RegionY, wstring FilePath, GeoType Type);
 
+	// NWC
+
+	static void AllocateNWCData(void);
+	static int32_t AllocateNWCBlockMapEntry(void);
+	static int32_t AllocateNWCLayersEntries(uint32_t Count);
+
+	static inline uint8_t *GetNeighborWeightPtrInternal(uint32_t RegionX, uint32_t RegionY,
+		uint32_t BlockX, uint32_t BlockY, uint32_t SubBlockX, uint32_t SubBlockY);
+	static inline void SetNeighborWeightInternal(uint32_t RegionX, uint32_t RegionY, uint32_t BlockX, uint32_t BlockY, 
+		uint32_t SubBlockX, uint32_t SubBlockY, uint8_t Weight);
+	static inline void SetNeighborWeightsInternal(uint32_t RegionX, uint32_t RegionY, uint32_t BlockX, uint32_t BlockY,
+		uint32_t SubBlockX, uint32_t SubBlockY, uint8_t WeightsCount, uint8_t* Weights);
+
 	// Usage utils
 
 	static void GetLowAndHighLayers(int16_t SubBlock, int16_t* Layers, int16_t LayersCount, int16_t& LowLayerIndex, int16_t& HighLayerIndex);
@@ -118,8 +140,13 @@ public:
 	static void LoadEasyGeo(wstring FilePath);
 	static void SaveEasyGeo(wstring FilePath);
 
-	static int16_t* GetSubBlocks(int32_t WorldX, int32_t WorldY, int16_t& Count);
+	static void LoadNeighborWeightCache(wstring FilePath);
+	static void SaveNeighborWeightCache(wstring FilePath);
 
+	static uint8_t* GetNeighborWeights(int32_t WorldX, int32_t WorldY, uint8_t& Count);
+	static void SetNeighborWeights(int32_t WorldX, int32_t WorldY, uint8_t Count, uint8_t* Weights);
+
+	static int16_t* GetSubBlocks(int32_t WorldX, int32_t WorldY, int16_t& Count);
 	static void SetSubBlocks(int32_t WorldX, int32_t WorldY, int16_t Count, ...);
 
 	// return true and DestSubBlock will contain block that we gonna land on if we go in this direction, return false if we cannot go in this direction
@@ -129,5 +156,6 @@ public:
 
 	static bool GetGroundSubBlock(int32_t WorldX, int32_t WorldY, int32_t WorldZ, int16_t& GroundSubBlock, int16_t& GroundLayerIndex);
 
+	static bool GeoToWorld(uint32_t GeoX, uint32_t GeoY, int32_t *WorldX, int32_t *WorldY);
 	static bool WorldToGeo(int32_t WorldX, int32_t WorldY, uint32_t *GeoX, uint32_t *GeoY);
 };

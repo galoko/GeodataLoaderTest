@@ -57,6 +57,9 @@
     <ClInclude Include="Geodata\L2GeodataPathFind.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="Utils\SimplexNoise.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="stdafx.cpp">
@@ -81,6 +84,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="Geodata\L2GeodataPathFind.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Utils\SimplexNoise.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
